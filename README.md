@@ -1,10 +1,7 @@
 # pyaegis
 
-[![CI](https://github.com/aegis-aead/pyaegis/actions/workflows/ci.yml/badge.svg)](https://github.com/aegis-aead/pyaegis/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/pyaegis.svg)](https://badge.fury.io/py/pyaegis)
-[![Python versions](https://img.shields.io/pypi/pyversions/pyaegis.svg)](https://pypi.org/project/pyaegis/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/aegis-aead/pyaegis/blob/main/LICENSE)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 Python bindings for libaegis - high-performance AEGIS authenticated encryption.
 
