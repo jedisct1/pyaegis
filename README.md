@@ -15,12 +15,12 @@ AEGIS is a high-performance authenticated cipher that provides both confidential
 
 #### Authenticated Encryption (AEAD)
 
-- AEGIS-128L: 16-byte key, 16-byte nonce - optimized for performance
-- AEGIS-256: 32-byte key, 32-byte nonce - higher security margin
-- AEGIS-128X2: Dual-lane variant for higher throughput
-- AEGIS-128X4: Quad-lane variant for maximum throughput on AVX-512
-- AEGIS-256X2: Dual-lane variant with 256-bit security
-- AEGIS-256X4: Quad-lane variant with 256-bit security
+- AEGIS-128L: 16-byte key, 16-byte nonce
+- AEGIS-256: 32-byte key, 32-byte nonce
+- AEGIS-128X2: 16-byte key, 16-byte nonce (recommended on most platforms)
+- AEGIS-128X4: 16-byte key, 16-byte nonce (recommended on high-end Intel CPUs)
+- AEGIS-256X2: 32-byte key, 32-byte nonce
+- AEGIS-256X4: 32-byte key, 32-byte nonce (recommended if a 256-bit nonce is required)
 
 #### Message Authentication Codes (MAC)
 
@@ -137,6 +137,31 @@ ciphertext, tag = cipher.encrypt_detached(key, nonce, b"secret")
 plaintext = cipher.decrypt_detached(key, nonce, ciphertext, tag)
 ```
 
+### Pre-allocated Buffers
+
+For performance-sensitive applications, you can provide pre-allocated buffers to avoid memory allocation:
+
+```python
+from pyaegis import AEGIS128L
+
+cipher = AEGIS128L()
+key = cipher.random_key()
+nonce = cipher.random_nonce()
+plaintext = b"secret message"
+
+# Pre-allocate output buffer for encryption
+output_buffer = bytearray(len(plaintext) + cipher.tag_size)
+cipher.encrypt(key, nonce, plaintext, into=output_buffer)
+
+# Pre-allocate output buffer for decryption
+plaintext_buffer = bytearray(len(output_buffer) - cipher.tag_size)
+cipher.decrypt(key, nonce, output_buffer, into=plaintext_buffer)
+
+# Also works with encrypt_detached
+ciphertext_buffer = bytearray(len(plaintext))
+ciphertext, tag = cipher.encrypt_detached(key, nonce, plaintext, ciphertext_into=ciphertext_buffer)
+```
+
 ### Tag Size
 
 By default, a 32-byte (256-bit) tag is used for maximum security. You can also use a 16-byte (128-bit) tag:
@@ -180,6 +205,10 @@ nonce = AEGIS128L.random_nonce()
 
 # Generate 1024 pseudo-random bytes
 random_bytes = AEGIS128L.stream(key, nonce, 1024)
+
+# With pre-allocated buffer for better performance
+buffer = bytearray(1024)
+random_bytes = AEGIS128L.stream(key, nonce, 1024, into=buffer)
 ```
 
 ### Message Authentication Code (MAC)

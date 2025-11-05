@@ -79,6 +79,7 @@ class _AEGISBase:
         nonce: bytes,
         plaintext: bytes,
         associated_data: bytes | None = None,
+        into: bytearray | None = None,
     ) -> bytes:
         """
         Encrypt and authenticate a message.
@@ -88,18 +89,30 @@ class _AEGISBase:
             nonce: Nonce (must be unique for each message with the same key)
             plaintext: Message to encrypt
             associated_data: Optional additional authenticated data (not encrypted)
+            into: Optional pre-allocated bytearray for output (must be len(plaintext) + tag_size)
 
         Returns:
             Ciphertext with authentication tag appended
 
         Raises:
-            ValueError: If key or nonce has incorrect length
+            ValueError: If key or nonce has incorrect length, or if into has wrong size
             AEGISError: If encryption fails
         """
         self._check_key(key)
         self._check_nonce(nonce)
 
         plaintext_len = len(plaintext)
+        output_len = plaintext_len + self.tag_size
+
+        # Use pre-allocated buffer if provided, otherwise allocate
+        if into is not None:
+            if len(into) != output_len:
+                raise ValueError(f"Output buffer must be {output_len} bytes, got {len(into)}")
+            output_buf = ffi.from_buffer(into)
+        else:
+            into = bytearray(output_len)
+            output_buf = ffi.from_buffer(into)
+
         if associated_data:
             ad_len = len(associated_data)
             ad_ptr = associated_data if ad_len > 0 else ffi.NULL
@@ -110,8 +123,6 @@ class _AEGISBase:
         # Multi-lane variants use detached mode internally
         if self._encrypt_func is None:
             assert self._encrypt_detached_func is not None
-            output_len = plaintext_len + self.tag_size
-            output_buf = ffi.new(f"uint8_t[{output_len}]")
             ciphertext_buf = output_buf
             tag_buf = ffi.cast("uint8_t*", output_buf) + plaintext_len
 
@@ -130,12 +141,9 @@ class _AEGISBase:
             if result != 0:
                 raise AEGISError("Encryption failed")
 
-            return bytes(ffi.buffer(output_buf, output_len))
+            return bytes(into)
 
         # Standard variants use combined mode
-        output_len = plaintext_len + self.tag_size
-        output_buf = ffi.new(f"uint8_t[{output_len}]")
-
         result = self._encrypt_func(
             output_buf,
             self.tag_size,
@@ -150,7 +158,7 @@ class _AEGISBase:
         if result != 0:
             raise AEGISError("Encryption failed")
 
-        return bytes(ffi.buffer(output_buf, output_len))
+        return bytes(into)
 
     def decrypt(
         self,
@@ -158,6 +166,7 @@ class _AEGISBase:
         nonce: bytes,
         ciphertext: bytes,
         associated_data: bytes | None = None,
+        into: bytearray | None = None,
     ) -> bytes:
         """
         Decrypt and verify an authenticated message.
@@ -167,12 +176,13 @@ class _AEGISBase:
             nonce: Nonce used during encryption
             ciphertext: Encrypted message with authentication tag
             associated_data: Optional additional authenticated data
+            into: Optional pre-allocated bytearray for output (must be len(ciphertext) - tag_size)
 
         Returns:
             Decrypted plaintext
 
         Raises:
-            ValueError: If key or nonce has incorrect length
+            ValueError: If key or nonce has incorrect length, or if into has wrong size
             DecryptionError: If authentication fails
         """
         self._check_key(key)
@@ -182,15 +192,23 @@ class _AEGISBase:
         if ciphertext_len < self.tag_size:
             raise DecryptionError("Ciphertext too short")
 
+        plaintext_len = ciphertext_len - self.tag_size
+
+        # Use pre-allocated buffer if provided, otherwise allocate
+        if into is not None:
+            if len(into) != plaintext_len:
+                raise ValueError(f"Output buffer must be {plaintext_len} bytes, got {len(into)}")
+            plaintext_buf = ffi.from_buffer(into)
+        else:
+            into = bytearray(plaintext_len)
+            plaintext_buf = ffi.from_buffer(into)
+
         if associated_data:
             ad_len = len(associated_data)
             ad_ptr = associated_data if ad_len > 0 else ffi.NULL
         else:
             ad_len = 0
             ad_ptr = ffi.NULL
-
-        plaintext_len = ciphertext_len - self.tag_size
-        plaintext_buf = ffi.new(f"uint8_t[{plaintext_len}]")
 
         # Multi-lane variants use detached mode internally
         if self._decrypt_func is None:
@@ -225,7 +243,7 @@ class _AEGISBase:
         if result != 0:
             raise DecryptionError("Authentication failed")
 
-        return bytes(ffi.buffer(plaintext_buf, plaintext_len))
+        return bytes(into)
 
 
 class _AEGISWithDetached(_AEGISBase):
@@ -237,6 +255,7 @@ class _AEGISWithDetached(_AEGISBase):
         nonce: bytes,
         plaintext: bytes,
         associated_data: bytes | None = None,
+        ciphertext_into: bytearray | None = None,
     ) -> tuple[bytes, bytes]:
         """
         Encrypt and authenticate a message, returning ciphertext and tag separately.
@@ -246,12 +265,13 @@ class _AEGISWithDetached(_AEGISBase):
             nonce: Nonce
             plaintext: Message to encrypt
             associated_data: Optional additional authenticated data
+            ciphertext_into: Optional pre-allocated bytearray for ciphertext (must be len(plaintext))
 
         Returns:
             Tuple of (ciphertext, authentication_tag)
 
         Raises:
-            ValueError: If key or nonce has incorrect length
+            ValueError: If key or nonce has incorrect length, or if ciphertext_into has wrong size
             AEGISError: If encryption fails
         """
         self._check_key(key)
@@ -260,16 +280,29 @@ class _AEGISWithDetached(_AEGISBase):
         if associated_data is None:
             associated_data = b""
 
+        plaintext_len = len(plaintext)
+
+        # Use pre-allocated buffer for ciphertext if provided
+        if ciphertext_into is not None:
+            if len(ciphertext_into) != plaintext_len:
+                raise ValueError(f"Ciphertext buffer must be {plaintext_len} bytes, got {len(ciphertext_into)}")
+            ciphertext_buf = ffi.from_buffer(ciphertext_into)
+        else:
+            ciphertext_into = bytearray(plaintext_len)
+            ciphertext_buf = ffi.from_buffer(ciphertext_into)
+
+        # Tag is small (16-32 bytes), so just allocate it
+        tag_into = bytearray(self.tag_size)
+        tag_buf = ffi.from_buffer(tag_into)
+
         assert self._encrypt_detached_func is not None
-        ciphertext_buf = ffi.new(f"uint8_t[{len(plaintext)}]")
-        tag_buf = ffi.new(f"uint8_t[{self.tag_size}]")
 
         result = self._encrypt_detached_func(
             ciphertext_buf,
             tag_buf,
             self.tag_size,
             plaintext,
-            len(plaintext),
+            plaintext_len,
             associated_data if len(associated_data) > 0 else ffi.NULL,
             len(associated_data),
             nonce,
@@ -279,10 +312,7 @@ class _AEGISWithDetached(_AEGISBase):
         if result != 0:
             raise AEGISError("Encryption failed")
 
-        return (
-            bytes(ffi.buffer(ciphertext_buf, len(plaintext))),
-            bytes(ffi.buffer(tag_buf, self.tag_size)),
-        )
+        return (bytes(ciphertext_into), bytes(tag_into))
 
     def decrypt_detached(
         self,
@@ -291,6 +321,7 @@ class _AEGISWithDetached(_AEGISBase):
         ciphertext: bytes,
         tag: bytes,
         associated_data: bytes | None = None,
+        into: bytearray | None = None,
     ) -> bytes:
         """
         Decrypt and verify a message with detached authentication tag.
@@ -301,12 +332,13 @@ class _AEGISWithDetached(_AEGISBase):
             ciphertext: Encrypted message
             tag: Authentication tag
             associated_data: Optional additional authenticated data
+            into: Optional pre-allocated bytearray for plaintext (must be len(ciphertext))
 
         Returns:
             Decrypted plaintext
 
         Raises:
-            ValueError: If key or nonce has incorrect length
+            ValueError: If key or nonce has incorrect length, or if into has wrong size
             DecryptionError: If authentication fails
         """
         self._check_key(key)
@@ -315,13 +347,23 @@ class _AEGISWithDetached(_AEGISBase):
         if associated_data is None:
             associated_data = b""
 
+        ciphertext_len = len(ciphertext)
+
+        # Use pre-allocated buffer if provided
+        if into is not None:
+            if len(into) != ciphertext_len:
+                raise ValueError(f"Output buffer must be {ciphertext_len} bytes, got {len(into)}")
+            plaintext_buf = ffi.from_buffer(into)
+        else:
+            into = bytearray(ciphertext_len)
+            plaintext_buf = ffi.from_buffer(into)
+
         assert self._decrypt_detached_func is not None
-        plaintext_buf = ffi.new(f"uint8_t[{len(ciphertext)}]")
 
         result = self._decrypt_detached_func(
             plaintext_buf,
             ciphertext,
-            len(ciphertext),
+            ciphertext_len,
             tag,
             len(tag),
             associated_data if len(associated_data) > 0 else ffi.NULL,
@@ -333,7 +375,7 @@ class _AEGISWithDetached(_AEGISBase):
         if result != 0:
             raise DecryptionError("Authentication failed")
 
-        return bytes(ffi.buffer(plaintext_buf, len(ciphertext)))
+        return bytes(into)
 
     def encrypt_inplace(
         self,
@@ -394,8 +436,9 @@ class _AEGISWithDetached(_AEGISBase):
 
         assert self._encrypt_detached_func is not None
 
-        # Allocate tag buffer
-        tag_buf = ffi.new(f"uint8_t[{self.tag_size}]")
+        # Allocate tag buffer (small, so overhead is negligible)
+        tag_into = bytearray(self.tag_size)
+        tag_buf = ffi.from_buffer(tag_into)
 
         # Get pointer to mutable buffer (for both input and output)
         buf_ptr = ffi.from_buffer(buffer)
@@ -416,7 +459,7 @@ class _AEGISWithDetached(_AEGISBase):
         if result != 0:
             raise AEGISError("Encryption failed")
 
-        return bytes(ffi.buffer(tag_buf, self.tag_size))
+        return bytes(tag_into)
 
     def decrypt_inplace(
         self,
@@ -502,7 +545,7 @@ class _AEGISWithStream(_AEGISWithDetached):
     """Base class for AEGIS variants that support stream generation."""
 
     @classmethod
-    def stream(cls, key: bytes, nonce: bytes, length: int) -> bytes:
+    def stream(cls, key: bytes, nonce: bytes, length: int, into: bytearray | None = None) -> bytes:
         """
         Generate a deterministic pseudo-random byte sequence.
 
@@ -510,20 +553,29 @@ class _AEGISWithStream(_AEGISWithDetached):
             key: Encryption key
             nonce: Nonce (can be reused for stream generation)
             length: Number of bytes to generate
+            into: Optional pre-allocated bytearray for output (must be length bytes)
 
         Returns:
             Pseudo-random bytes
 
         Raises:
-            ValueError: If key has incorrect length
+            ValueError: If key has incorrect length or into has wrong size
         """
         if len(key) != cls.KEY_SIZE:
             raise ValueError(f"Key must be {cls.KEY_SIZE} bytes, got {len(key)}")
 
+        # Use pre-allocated buffer if provided
+        if into is not None:
+            if len(into) != length:
+                raise ValueError(f"Output buffer must be {length} bytes, got {len(into)}")
+            output_buf = ffi.from_buffer(into)
+        else:
+            into = bytearray(length)
+            output_buf = ffi.from_buffer(into)
+
         assert cls._stream_func is not None
-        output_buf = ffi.new(f"uint8_t[{length}]")
         cls._stream_func(output_buf, length, nonce, key)
-        return bytes(ffi.buffer(output_buf, length))
+        return bytes(into)
 
 
 class AEGIS128L(_AEGISWithStream):
