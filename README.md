@@ -239,6 +239,7 @@ with AegisStreamDecrypt128L(key, nonce, associated_data=b"metadata") as dec:
 **Security Note**: The streaming decryption API buffers all plaintext internally and only releases it after successful tag verification. This prevents using unauthenticated data.
 
 **Available Streaming Classes**:
+
 - `AegisStreamEncrypt128L` / `AegisStreamDecrypt128L`
 - `AegisStreamEncrypt256` / `AegisStreamDecrypt256`
 - `AegisStreamEncrypt128X2` / `AegisStreamDecrypt128X2`
