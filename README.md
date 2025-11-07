@@ -193,6 +193,59 @@ cipher.decrypt_inplace(key, nonce, buffer, tag)
 
 In-place operations work with `bytearray` or `memoryview` objects and overwrite the input buffer directly. If decryption fails, the buffer is zeroed for security.
 
+### Streaming Encryption/Decryption
+
+For processing large data in chunks or when data arrives incrementally, use the streaming encryption/decryption classes. These allow you to encrypt or decrypt data piece by piece without loading everything into memory at once.
+
+#### Streaming Encryption
+
+```python
+from pyaegis import AegisStreamEncrypt128L
+
+key = AegisStreamEncrypt128L.random_key()
+nonce = AegisStreamEncrypt128L.random_nonce()
+
+# Create a streaming encryption context
+with AegisStreamEncrypt128L(key, nonce, associated_data=b"metadata") as enc:
+    # Encrypt data in chunks
+    ciphertext1 = enc.update(b"first chunk of data")
+    ciphertext2 = enc.update(b"second chunk of data")
+
+    # Finalize and get the authentication tag
+    tag = enc.final()
+
+# Send ciphertext1 + ciphertext2 + tag to the recipient
+```
+
+#### Streaming Decryption
+
+```python
+from pyaegis import AegisStreamDecrypt128L, DecryptionError
+
+# Create a streaming decryption context
+with AegisStreamDecrypt128L(key, nonce, associated_data=b"metadata") as dec:
+    # Decrypt data in chunks
+    dec.update(ciphertext1)
+    dec.update(ciphertext2)
+
+    # Verify the authentication tag and get all plaintext
+    try:
+        plaintext = dec.verify(tag)
+        # plaintext is only released after successful verification
+    except DecryptionError:
+        print("Authentication failed!")
+```
+
+**Security Note**: The streaming decryption API buffers all plaintext internally and only releases it after successful tag verification. This prevents using unauthenticated data.
+
+**Available Streaming Classes**:
+- `AegisStreamEncrypt128L` / `AegisStreamDecrypt128L`
+- `AegisStreamEncrypt256` / `AegisStreamDecrypt256`
+- `AegisStreamEncrypt128X2` / `AegisStreamDecrypt128X2`
+- `AegisStreamEncrypt128X4` / `AegisStreamDecrypt128X4`
+- `AegisStreamEncrypt256X2` / `AegisStreamDecrypt256X2`
+- `AegisStreamEncrypt256X4` / `AegisStreamDecrypt256X4`
+
 ### Stream Generation
 
 Generate a deterministic pseudo-random byte sequence (AEGIS-128L and AEGIS-256 only):
