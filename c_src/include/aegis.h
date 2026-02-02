@@ -25,6 +25,8 @@
 #include "aegis256x2.h"
 #include "aegis256x4.h"
 
+#include "aegis_raf.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
