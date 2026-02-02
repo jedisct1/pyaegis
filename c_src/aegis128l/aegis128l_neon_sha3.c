@@ -23,7 +23,11 @@
 #        pragma clang attribute push(__attribute__((target("neon,crypto,aes,sha3"))), \
                                      apply_to = function)
 #    elif defined(__GNUC__)
-#        pragma GCC target("+simd+crypto+sha3")
+#        if __GNUC__ < 14
+#            pragma GCC target("arch=armv8.2-a+simd+crypto+sha3")
+#        else
+#            pragma GCC target("+simd+crypto+sha3")
+#        endif
 #    endif
 
 #    define AES_BLOCK_LENGTH 16
@@ -58,22 +62,21 @@ aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block
 #    include "aegis128l_common.h"
 
 struct aegis128l_implementation aegis128l_neon_sha3_implementation = {
-    .encrypt_detached              = encrypt_detached,
-    .decrypt_detached              = decrypt_detached,
-    .encrypt_unauthenticated       = encrypt_unauthenticated,
-    .decrypt_unauthenticated       = decrypt_unauthenticated,
-    .stream                        = stream,
-    .state_init                    = state_init,
-    .state_encrypt_update          = state_encrypt_update,
-    .state_encrypt_detached_final  = state_encrypt_detached_final,
-    .state_encrypt_final           = state_encrypt_final,
-    .state_decrypt_detached_update = state_decrypt_detached_update,
-    .state_decrypt_detached_final  = state_decrypt_detached_final,
-    .state_mac_init                = state_mac_init,
-    .state_mac_update              = state_mac_update,
-    .state_mac_final               = state_mac_final,
-    .state_mac_reset               = state_mac_reset,
-    .state_mac_clone               = state_mac_clone,
+    .encrypt_detached        = encrypt_detached,
+    .decrypt_detached        = decrypt_detached,
+    .encrypt_unauthenticated = encrypt_unauthenticated,
+    .decrypt_unauthenticated = decrypt_unauthenticated,
+    .stream                  = stream,
+    .state_init              = state_init,
+    .state_encrypt_update    = state_encrypt_update,
+    .state_encrypt_final     = state_encrypt_final,
+    .state_decrypt_update    = state_decrypt_update,
+    .state_decrypt_final     = state_decrypt_final,
+    .state_mac_init          = state_mac_init,
+    .state_mac_update        = state_mac_update,
+    .state_mac_final         = state_mac_final,
+    .state_mac_reset         = state_mac_reset,
+    .state_mac_clone         = state_mac_clone,
 };
 
 #    ifdef __clang__

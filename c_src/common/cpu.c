@@ -85,7 +85,6 @@ _have_hwcap(int hwcap_id, int bit)
 #    ifdef HAVE_GETAUXVAL
     buf = getauxval(hwcap_id);
 #    elif defined(HAVE_ELF_AUX_INFO)
-    unsigned long buf;
     if (elf_aux_info(hwcap_id, (void *) &buf, (int) sizeof buf) != 0) {
         return 0;
     }

@@ -997,7 +997,7 @@ class _AEGISStreamEncryptBase:
     _state_type = None
     _state_init_func = None
     _state_encrypt_update_func = None
-    _state_encrypt_detached_final_func = None
+    _state_encrypt_final_func = None
 
     def __init__(
         self,
@@ -1066,18 +1066,17 @@ class _AEGISStreamEncryptBase:
         if not plaintext:
             return b""
 
-        # Allocate output buffer
+        # Allocate output buffer (same size as input - immediate output)
         ciphertext_buf = ffi.new(f"uint8_t[{len(plaintext)}]")
-        written = ffi.new("size_t*")
 
         result = self._state_encrypt_update_func(
-            self._state, ciphertext_buf, len(plaintext), written, plaintext, len(plaintext)
+            self._state, ciphertext_buf, plaintext, len(plaintext)
         )
 
         if result != 0:
             raise AegisError("Encryption update failed")
 
-        return bytes(ffi.buffer(ciphertext_buf, written[0]))
+        return bytes(ffi.buffer(ciphertext_buf, len(plaintext)))
 
     def final(self) -> bytes:
         """
@@ -1093,11 +1092,8 @@ class _AEGISStreamEncryptBase:
             raise AegisError("Encryption already finalized")
 
         tag_buf = ffi.new(f"uint8_t[{self.tag_size}]")
-        written = ffi.new("size_t*")
 
-        result = self._state_encrypt_detached_final_func(
-            self._state, ffi.NULL, 0, written, tag_buf, self.tag_size
-        )
+        result = self._state_encrypt_final_func(self._state, tag_buf, self.tag_size)
 
         if result != 0:
             raise AegisError("Encryption finalization failed")
@@ -1128,7 +1124,7 @@ class _AEGISStreamDecryptBase:
     _state_type = None
     _state_init_func = None
     _state_decrypt_update_func = None
-    _state_decrypt_detached_final_func = None
+    _state_decrypt_final_func = None
 
     def __init__(
         self,
@@ -1199,19 +1195,18 @@ class _AEGISStreamDecryptBase:
         if not ciphertext:
             return
 
-        # Allocate output buffer
+        # Allocate output buffer (same size as input - immediate output)
         plaintext_buf = ffi.new(f"uint8_t[{len(ciphertext)}]")
-        written = ffi.new("size_t*")
 
         result = self._state_decrypt_update_func(
-            self._state, plaintext_buf, len(ciphertext), written, ciphertext, len(ciphertext)
+            self._state, plaintext_buf, ciphertext, len(ciphertext)
         )
 
         if result != 0:
             raise AegisError("Decryption update failed")
 
         # Buffer the plaintext - don't release it until verification
-        self._plaintext_chunks.append(bytes(ffi.buffer(plaintext_buf, written[0])))
+        self._plaintext_chunks.append(bytes(ffi.buffer(plaintext_buf, len(ciphertext))))
 
     def verify(self, tag: bytes) -> bytes:
         """
@@ -1230,11 +1225,7 @@ class _AEGISStreamDecryptBase:
         if self._finalized:
             raise AegisError("Decryption already finalized")
 
-        written = ffi.new("size_t*")
-
-        result = self._state_decrypt_detached_final_func(
-            self._state, ffi.NULL, 0, written, tag, len(tag)
-        )
+        result = self._state_decrypt_final_func(self._state, tag, len(tag))
 
         self._finalized = True
 
@@ -1288,7 +1279,7 @@ class AegisStreamEncrypt128L(_AEGISStreamEncryptBase):
     _state_type = "aegis128l_state"
     _state_init_func = lib.aegis128l_state_init
     _state_encrypt_update_func = lib.aegis128l_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis128l_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis128l_state_encrypt_final
 
 
 class AegisStreamDecrypt128L(_AEGISStreamDecryptBase):
@@ -1314,8 +1305,8 @@ class AegisStreamDecrypt128L(_AEGISStreamDecryptBase):
 
     _state_type = "aegis128l_state"
     _state_init_func = lib.aegis128l_state_init
-    _state_decrypt_update_func = lib.aegis128l_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis128l_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis128l_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis128l_state_decrypt_final
 
 
 # AEGIS-256 Streaming Classes
@@ -1342,7 +1333,7 @@ class AegisStreamEncrypt256(_AEGISStreamEncryptBase):
     _state_type = "aegis256_state"
     _state_init_func = lib.aegis256_state_init
     _state_encrypt_update_func = lib.aegis256_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis256_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis256_state_encrypt_final
 
 
 class AegisStreamDecrypt256(_AEGISStreamDecryptBase):
@@ -1362,8 +1353,8 @@ class AegisStreamDecrypt256(_AEGISStreamDecryptBase):
 
     _state_type = "aegis256_state"
     _state_init_func = lib.aegis256_state_init
-    _state_decrypt_update_func = lib.aegis256_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis256_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis256_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis256_state_decrypt_final
 
 
 # AEGIS-128X2 Streaming Classes
@@ -1388,7 +1379,7 @@ class AegisStreamEncrypt128X2(_AEGISStreamEncryptBase):
     _state_type = "aegis128x2_state"
     _state_init_func = lib.aegis128x2_state_init
     _state_encrypt_update_func = lib.aegis128x2_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis128x2_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis128x2_state_encrypt_final
 
 
 class AegisStreamDecrypt128X2(_AEGISStreamDecryptBase):
@@ -1408,8 +1399,8 @@ class AegisStreamDecrypt128X2(_AEGISStreamDecryptBase):
 
     _state_type = "aegis128x2_state"
     _state_init_func = lib.aegis128x2_state_init
-    _state_decrypt_update_func = lib.aegis128x2_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis128x2_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis128x2_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis128x2_state_decrypt_final
 
 
 # AEGIS-128X4 Streaming Classes
@@ -1434,7 +1425,7 @@ class AegisStreamEncrypt128X4(_AEGISStreamEncryptBase):
     _state_type = "aegis128x4_state"
     _state_init_func = lib.aegis128x4_state_init
     _state_encrypt_update_func = lib.aegis128x4_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis128x4_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis128x4_state_encrypt_final
 
 
 class AegisStreamDecrypt128X4(_AEGISStreamDecryptBase):
@@ -1454,8 +1445,8 @@ class AegisStreamDecrypt128X4(_AEGISStreamDecryptBase):
 
     _state_type = "aegis128x4_state"
     _state_init_func = lib.aegis128x4_state_init
-    _state_decrypt_update_func = lib.aegis128x4_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis128x4_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis128x4_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis128x4_state_decrypt_final
 
 
 # AEGIS-256X2 Streaming Classes
@@ -1480,7 +1471,7 @@ class AegisStreamEncrypt256X2(_AEGISStreamEncryptBase):
     _state_type = "aegis256x2_state"
     _state_init_func = lib.aegis256x2_state_init
     _state_encrypt_update_func = lib.aegis256x2_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis256x2_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis256x2_state_encrypt_final
 
 
 class AegisStreamDecrypt256X2(_AEGISStreamDecryptBase):
@@ -1500,8 +1491,8 @@ class AegisStreamDecrypt256X2(_AEGISStreamDecryptBase):
 
     _state_type = "aegis256x2_state"
     _state_init_func = lib.aegis256x2_state_init
-    _state_decrypt_update_func = lib.aegis256x2_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis256x2_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis256x2_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis256x2_state_decrypt_final
 
 
 # AEGIS-256X4 Streaming Classes
@@ -1526,7 +1517,7 @@ class AegisStreamEncrypt256X4(_AEGISStreamEncryptBase):
     _state_type = "aegis256x4_state"
     _state_init_func = lib.aegis256x4_state_init
     _state_encrypt_update_func = lib.aegis256x4_state_encrypt_update
-    _state_encrypt_detached_final_func = lib.aegis256x4_state_encrypt_detached_final
+    _state_encrypt_final_func = lib.aegis256x4_state_encrypt_final
 
 
 class AegisStreamDecrypt256X4(_AEGISStreamDecryptBase):
@@ -1546,5 +1537,5 @@ class AegisStreamDecrypt256X4(_AEGISStreamDecryptBase):
 
     _state_type = "aegis256x4_state"
     _state_init_func = lib.aegis256x4_state_init
-    _state_decrypt_update_func = lib.aegis256x4_state_decrypt_detached_update
-    _state_decrypt_detached_final_func = lib.aegis256x4_state_decrypt_detached_final
+    _state_decrypt_update_func = lib.aegis256x4_state_decrypt_update
+    _state_decrypt_final_func = lib.aegis256x4_state_decrypt_final
