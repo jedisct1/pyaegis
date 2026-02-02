@@ -154,8 +154,9 @@ output_buffer = bytearray(len(plaintext) + cipher.tag_size)
 cipher.encrypt(key, nonce, plaintext, into=output_buffer)
 
 # Pre-allocate output buffer for decryption
-plaintext_buffer = bytearray(len(output_buffer) - cipher.tag_size)
-cipher.decrypt(key, nonce, output_buffer, into=plaintext_buffer)
+ciphertext = bytes(output_buffer)  # Convert to bytes for decrypt input
+plaintext_buffer = bytearray(len(ciphertext) - cipher.tag_size)
+cipher.decrypt(key, nonce, ciphertext, into=plaintext_buffer)
 
 # Also works with encrypt_detached
 ciphertext_buffer = bytearray(len(plaintext))
@@ -325,3 +326,104 @@ Multi-lane variants (X2, X4) provide higher throughput on systems with appropria
 - Nonce Uniqueness: Never reuse a nonce with the same key. If you can't maintain a counter, use `random_nonce()` for each message.
 - Key Management: Use `random_key()` to generate cryptographically secure keys. Keep keys secret.
 - AAD: Additional authenticated data is not encrypted but is protected against tampering.
+
+### Random Access Files (RAF)
+
+The RAF API provides encrypted file storage with random access capabilities. Files are divided into fixed-size chunks, each independently encrypted, enabling efficient random access without decrypting the entire file.
+
+#### Basic Usage
+
+```python
+from pyaegis import AegisRaf128L, BytesIOStorage
+
+# Create an in-memory storage backend
+storage = BytesIOStorage()
+key = AegisRaf128L.random_key()
+
+# Create and write to an encrypted file
+with AegisRaf128L(storage, key, create=True) as f:
+    f.write(b"Hello, World!")
+    f.write(b" More data.")
+
+# Reopen and read
+with AegisRaf128L(storage, key) as f:
+    print(f.read())  # b'Hello, World! More data.'
+```
+
+#### File-based Storage
+
+```python
+from pyaegis import AegisRaf128L, FileStorage
+
+key = AegisRaf128L.random_key()
+
+# Create encrypted file on disk
+with FileStorage("/path/to/file.raf", "w+b") as storage, \
+        AegisRaf128L(storage, key, create=True) as f:
+    f.write(b"Secret data")
+
+# Read from encrypted file
+with FileStorage("/path/to/file.raf", "r+b") as storage, \
+        AegisRaf128L(storage, key) as f:
+    print(f.read())
+```
+
+#### Random Access Operations
+
+```python
+from pyaegis import AegisRaf128L, BytesIOStorage
+
+storage = BytesIOStorage()
+key = AegisRaf128L.random_key()
+
+with AegisRaf128L(storage, key, create=True) as f:
+    f.write(b"0123456789")
+
+    # Seek and read
+    f.seek(5)
+    print(f.read(3))  # b'567'
+
+    # pread - read without changing position
+    print(f.pread(3, 0))  # b'012'
+    print(f.tell())  # 8 (unchanged)
+
+    # pwrite - write without changing position
+    f.pwrite(b"ABC", 3)
+    f.seek(0)
+    print(f.read())  # b'012ABC6789'
+```
+
+#### Auto-detecting Algorithm
+
+```python
+from pyaegis import raf_open, raf_probe, BytesIOStorage, AegisRaf256
+
+storage = BytesIOStorage()
+key = AegisRaf256.random_key()
+
+# Create with AEGIS-256
+with AegisRaf256(storage, key, create=True) as f:
+    f.write(b"data")
+
+# Probe to see file parameters (without key)
+alg_id, chunk_size, file_size = raf_probe(storage)
+print(f"Algorithm: {alg_id}, Chunk size: {chunk_size}, Size: {file_size}")
+
+# Auto-detect and open with correct class
+with raf_open(storage, key) as f:
+    print(f.read())  # b'data'
+```
+
+#### Available RAF Classes
+
+- `AegisRaf128L`: 16-byte key
+- `AegisRaf256`: 32-byte key
+- `AegisRaf128X2`, `AegisRaf128X4`: 16-byte key, multi-lane
+- `AegisRaf256X2`, `AegisRaf256X4`: 32-byte key, multi-lane
+
+#### Storage Backends
+
+- `FileStorage`: File-based storage using `os.pread`/`os.pwrite` (Unix only)
+- `BytesIOStorage`: In-memory storage for testing
+
+Custom backends can be implemented by following the `RAFStorage` protocol.

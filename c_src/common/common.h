@@ -6,9 +6,9 @@
 
 #if defined(__wasm__) && !defined(__wasi__)
 static int errno;
-#    define memcpy(A, B, C)  __builtin_memcpy((A), (B), (C))
-#    define memset(A, B, C)  __builtin_memset((A), (B), (C))
-#    define memcmp(A, B, C)  __builtin_memcmp((A), (B), (C))
+#    define memcpy(A, B, C) __builtin_memcpy((A), (B), (C))
+#    define memset(A, B, C) __builtin_memset((A), (B), (C))
+#    define memcmp(A, B, C) __builtin_memcmp((A), (B), (C))
 #else
 #    include <errno.h>
 #    include <stdlib.h>

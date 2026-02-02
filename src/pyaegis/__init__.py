@@ -43,6 +43,23 @@ from .aegis import (
     AegisStreamEncrypt256X4,
     DecryptionError,
 )
+from .raf import (
+    AegisRaf128L,
+    AegisRaf128X2,
+    AegisRaf128X4,
+    AegisRaf256,
+    AegisRaf256X2,
+    AegisRaf256X4,
+    BytesIOStorage,
+    FileStorage,
+    RAFAuthenticationError,
+    RAFConfigError,
+    RAFError,
+    RAFIOError,
+    RAFStorage,
+    raf_open,
+    raf_probe,
+)
 
 __version__ = "0.2.0"
 
@@ -60,6 +77,12 @@ __all__ = [
     "AegisMac256",
     "AegisMac256X2",
     "AegisMac256X4",
+    "AegisRaf128L",
+    "AegisRaf128X2",
+    "AegisRaf128X4",
+    "AegisRaf256",
+    "AegisRaf256X2",
+    "AegisRaf256X4",
     "AegisStreamDecrypt128L",
     "AegisStreamDecrypt128X2",
     "AegisStreamDecrypt128X4",
@@ -72,5 +95,14 @@ __all__ = [
     "AegisStreamEncrypt256",
     "AegisStreamEncrypt256X2",
     "AegisStreamEncrypt256X4",
+    "BytesIOStorage",
     "DecryptionError",
+    "FileStorage",
+    "RAFAuthenticationError",
+    "RAFConfigError",
+    "RAFError",
+    "RAFIOError",
+    "RAFStorage",
+    "raf_open",
+    "raf_probe",
 ]
