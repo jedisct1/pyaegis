@@ -9,13 +9,13 @@ from pyaegis import (
     Aegis256,
     Aegis256X2,
     Aegis256X4,
+    AegisError,
     AegisMac128L,
     AegisMac128X2,
     AegisMac128X4,
     AegisMac256,
     AegisMac256X2,
     AegisMac256X4,
-    AegisError,
     DecryptionError,
 )
 
