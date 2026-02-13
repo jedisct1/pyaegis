@@ -428,6 +428,7 @@ class _AEGISRAFBase:
 
         self._config = ffi.new("aegis_raf_config*")
         self._config.scratch = self._scratch
+        self._config.merkle = ffi.NULL
         self._config.chunk_size = actual_chunk_size
         self._config.flags = flags
 
