@@ -432,6 +432,8 @@ class _AEGISRAFBase:
 
     CHUNK_MIN: int = lib.AEGIS_RAF_CHUNK_MIN
     CHUNK_MAX: int = lib.AEGIS_RAF_CHUNK_MAX
+    MERKLE_HASH_MIN: int = lib.AEGIS_RAF_MERKLE_HASH_MIN
+    MERKLE_HASH_MAX: int = lib.AEGIS_RAF_MERKLE_HASH_MAX
     DEFAULT_CHUNK_SIZE: int = 65536  # 64 KB default
 
     _ctx_type: str
@@ -542,6 +544,11 @@ class _AEGISRAFBase:
             max_chunks = merkle_max_chunks if merkle_max_chunks is not None else 16384
             if max_chunks <= 0:
                 raise RAFConfigError("merkle_max_chunks must be > 0")
+            if not (self.MERKLE_HASH_MIN <= hasher.hash_len <= self.MERKLE_HASH_MAX):
+                raise RAFConfigError(
+                    f"hash_len must be between {self.MERKLE_HASH_MIN} and "
+                    f"{self.MERKLE_HASH_MAX}, got {hasher.hash_len}"
+                )
 
             self._merkle_cfg = ffi.new("aegis_raf_merkle_config*")
             self._merkle_cfg.hash_len = hasher.hash_len

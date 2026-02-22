@@ -145,7 +145,12 @@ aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg)
         return -1;
     }
 
-    if (cfg->buf == NULL || cfg->hash_len == 0 || cfg->max_chunks == 0) {
+    if (cfg->buf == NULL || cfg->max_chunks == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (cfg->hash_len < AEGIS_RAF_MERKLE_HASH_MIN ||
+        cfg->hash_len > AEGIS_RAF_MERKLE_HASH_MAX) {
         errno = EINVAL;
         return -1;
     }
@@ -209,7 +214,7 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
     size_t   left_off;
     size_t   right_off;
     size_t   parent_off;
-    uint64_t parent_idx;
+    uint8_t  empty_hash[AEGIS_RAF_MERKLE_HASH_MAX];
     int      ret;
 
     if (cfg == NULL || first_chunk > last_chunk || last_chunk >= cfg->max_chunks) {
@@ -246,13 +251,6 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
                 ret = cfg->hash_parent(cfg->user, cfg->buf + parent_off, cfg->hash_len,
                                        cfg->buf + left_off, cfg->buf + right_off, level, i);
             } else {
-                uint8_t empty_hash[256];
-
-                if (cfg->hash_len > sizeof(empty_hash)) {
-                    errno = EINVAL;
-                    return -1;
-                }
-
                 ret = cfg->hash_empty(cfg->user, empty_hash, cfg->hash_len, level, right_child);
                 if (ret != 0) {
                     return ret;

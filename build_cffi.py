@@ -265,6 +265,8 @@ def build_ffi():
         #define AEGIS_RAF_HEADER_SIZE   92
         #define AEGIS_RAF_FILE_ID_BYTES 32
         #define AEGIS_RAF_TAG_BYTES     16
+        #define AEGIS_RAF_MERKLE_HASH_MIN ...
+        #define AEGIS_RAF_MERKLE_HASH_MAX ...
         #define AEGIS_RAF_SCRATCH_ALIGN 64
 
         // RAF types
