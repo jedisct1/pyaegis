@@ -199,7 +199,12 @@ def run_all_benchmarks():
     # Message sizes to test (up to 10 MB)
     small_sizes = [64, 256, 1024]  # More iterations for small messages
     medium_sizes = [8 * 1024, 64 * 1024]  # Medium iterations
-    large_sizes = [256 * 1024, 1024 * 1024, 5 * 1024 * 1024, 10 * 1024 * 1024]  # Fewer iterations for large messages
+    large_sizes = [
+        256 * 1024,
+        1024 * 1024,
+        5 * 1024 * 1024,
+        10 * 1024 * 1024,
+    ]  # Fewer iterations for large messages
 
     variants = [
         (
