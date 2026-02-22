@@ -5,6 +5,39 @@
 
 Python bindings for libaegis - high-performance AEGIS authenticated encryption.
 
+- [pyaegis](#pyaegis)
+  - [Overview](#overview)
+    - [Supported Variants](#supported-variants)
+      - [Authenticated Encryption (AEAD)](#authenticated-encryption-aead)
+      - [Message Authentication Codes (MAC)](#message-authentication-codes-mac)
+  - [Installation](#installation)
+    - [From PyPI](#from-pypi)
+    - [From Source](#from-source)
+    - [Building a Distribution](#building-a-distribution)
+  - [Usage](#usage)
+    - [Basic Encryption/Decryption](#basic-encryptiondecryption)
+    - [With Additional Authenticated Data (AAD)](#with-additional-authenticated-data-aad)
+    - [Detached Tag Mode](#detached-tag-mode)
+    - [Pre-allocated Buffers](#pre-allocated-buffers)
+    - [Tag Size](#tag-size)
+    - [In-Place Encryption/Decryption](#in-place-encryptiondecryption)
+    - [Streaming Encryption/Decryption](#streaming-encryptiondecryption)
+      - [Streaming Encryption](#streaming-encryption)
+      - [Streaming Decryption](#streaming-decryption)
+    - [Stream Generation](#stream-generation)
+    - [Message Authentication Code (MAC)](#message-authentication-code-mac)
+  - [Error Handling](#error-handling)
+  - [Performance](#performance)
+  - [Security Considerations](#security-considerations)
+    - [Random Access Files (RAF)](#random-access-files-raf)
+      - [Basic Usage](#basic-usage)
+      - [File-based Storage](#file-based-storage)
+      - [Random Access Operations](#random-access-operations)
+      - [Auto-detecting Algorithm](#auto-detecting-algorithm)
+      - [Available RAF Classes](#available-raf-classes)
+      - [Merkle Tree Integrity Verification](#merkle-tree-integrity-verification)
+      - [Storage Backends](#storage-backends)
+
 ## Overview
 
 pyaegis provides Pythonic interfaces to the AEGIS family of authenticated encryption algorithms.
@@ -420,6 +453,69 @@ with raf_open(storage, key) as f:
 - `AegisRaf256`: 32-byte key
 - `AegisRaf128X2`, `AegisRaf128X4`: 16-byte key, multi-lane
 - `AegisRaf256X2`, `AegisRaf256X4`: 32-byte key, multi-lane
+
+#### Merkle Tree Integrity Verification
+
+RAF files can optionally maintain a Merkle hash tree over their chunks. When enabled, every write automatically updates a binary hash tree in memory. The root hash can be stored externally (e.g. in a database) and later used to verify file integrity without trusting the storage layer.
+
+```python
+from pyaegis import AegisRaf128L, BytesIOStorage
+
+storage = BytesIOStorage()
+key = AegisRaf128L.random_key()
+
+# Create with Merkle tree enabled (uses SHA-256 by default)
+with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+    f.write(b"important data")
+    root = f.root_hash  # 32-byte SHA-256 root hash
+    print(f"Root hash: {root.hex()}")
+
+# Later: reopen and verify integrity
+with AegisRaf128L(storage, key, merkle=True) as f:
+    f.verify_root(root)  # raises RAFAuthenticationError on mismatch
+```
+
+For more control, you can call `merkle_rebuild()` and `merkle_verify()` separately:
+
+```python
+with AegisRaf128L(storage, key, merkle=True) as f:
+    # Rebuild tree from file contents (decrypts every chunk)
+    f.merkle_rebuild()
+
+    # Verify all chunks against the in-memory tree
+    corrupted = f.merkle_verify()  # None if clean, chunk index if corrupted
+```
+
+The `merkle_max_chunks` parameter controls how many chunks the tree can track (default: 16384, covering ~1 GiB at 64 KB chunks). For larger files, pass a higher value:
+
+```python
+with AegisRaf128L(storage, key, create=True, merkle=True, merkle_max_chunks=100000) as f:
+    ...
+```
+
+Custom hash functions can be used by passing a `MerkleHasher` instance instead of `True`:
+
+```python
+from pyaegis import SHA256MerkleHasher
+
+# The default hasher (equivalent to merkle=True)
+hasher = SHA256MerkleHasher()
+
+# Or implement your own: any object with hash_len, hash_leaf(),
+# hash_parent(), and hash_empty() methods works.
+
+with AegisRaf128L(storage, key, create=True, merkle=hasher) as f:
+    ...
+```
+
+Merkle support works with `raf_open()` too:
+
+```python
+from pyaegis import raf_open
+
+with raf_open(storage, key, merkle=True) as f:
+    f.verify_root(expected_root)
+```
 
 #### Storage Backends
 

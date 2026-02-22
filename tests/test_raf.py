@@ -1,5 +1,7 @@
 """Tests for RAF (Random Access Format) encrypted file API."""
 
+import hashlib
+
 import pytest
 
 from pyaegis import (
@@ -11,9 +13,12 @@ from pyaegis import (
     AegisRaf256X4,
     BytesIOStorage,
     FileStorage,
+    MerkleHasher,
     RAFAuthenticationError,
     RAFConfigError,
     RAFError,
+    RAFIOError,
+    SHA256MerkleHasher,
     raf_open,
     raf_probe,
 )
@@ -672,6 +677,361 @@ class TestReadAtEOF:
         with AegisRaf128L(storage, key) as f:
             data = f.pread(100, 0)
             assert data == b"hello"
+
+
+ALL_RAF_CLASSES = [
+    AegisRaf128L,
+    AegisRaf256,
+    AegisRaf128X2,
+    AegisRaf128X4,
+    AegisRaf256X2,
+    AegisRaf256X4,
+]
+
+
+class Blake2bMerkleHasher:
+    """Custom Merkle hasher using BLAKE2b for testing."""
+
+    hash_len = 32
+
+    def hash_leaf(self, chunk: bytes, chunk_len: int, chunk_idx: int) -> bytes:
+        h = hashlib.blake2b(digest_size=32)
+        h.update(b"\x00")
+        h.update(chunk_idx.to_bytes(8, "little"))
+        h.update(chunk[:chunk_len])
+        return h.digest()
+
+    def hash_parent(self, left: bytes, right: bytes, level: int, node_idx: int) -> bytes:
+        h = hashlib.blake2b(digest_size=32)
+        h.update(b"\x01")
+        h.update(level.to_bytes(4, "little"))
+        h.update(node_idx.to_bytes(8, "little"))
+        h.update(left)
+        h.update(right)
+        return h.digest()
+
+    def hash_empty(self, level: int, node_idx: int) -> bytes:
+        h = hashlib.blake2b(digest_size=32)
+        h.update(b"\x02")
+        h.update(level.to_bytes(4, "little"))
+        h.update(node_idx.to_bytes(8, "little"))
+        return h.digest()
+
+
+class TestMerkle:
+    """Tests for Merkle tree support in RAF."""
+
+    def test_merkle_true_roundtrip(self):
+        """merkle=True round-trip: root_hash is 32 bytes."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"Hello, Merkle!")
+            root = f.root_hash
+            assert root is not None
+            assert len(root) == 32
+
+    def test_root_hash_changes_on_write(self):
+        """Root hash changes after additional write."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"first")
+            root1 = f.root_hash
+            f.write(b"second")
+            root2 = f.root_hash
+            assert root1 != root2
+
+    def test_root_hash_deterministic(self):
+        """Same data with same hasher produces same root."""
+        key = AegisRaf128L.random_key()
+        data = b"deterministic content"
+        roots = []
+        for _ in range(2):
+            storage = BytesIOStorage()
+            with AegisRaf128L(storage, key, create=True, merkle=True, truncate=True) as f:
+                f.write(data)
+                roots.append(f.root_hash)
+
+        assert roots[0] == roots[1]
+
+    def test_rebuild_reproduces_root(self):
+        """Close and reopen: rebuild reproduces the same root hash."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"data for rebuild test")
+            original_root = f.root_hash
+
+        with AegisRaf128L(storage, key, merkle=True) as f:
+            f.merkle_rebuild()
+            assert f.root_hash == original_root
+
+    def test_verify_clean_file(self):
+        """Verify returns None for an untampered file."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"clean data")
+
+        with AegisRaf128L(storage, key, merkle=True) as f:
+            f.merkle_rebuild()
+            assert f.merkle_verify() is None
+
+    def test_verify_root_happy_path(self):
+        """verify_root succeeds with correct root."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"verify root test")
+            root = f.root_hash
+
+        with AegisRaf128L(storage, key, merkle=True) as f:
+            f.verify_root(root)
+
+    def test_verify_root_wrong_root(self):
+        """verify_root raises RAFAuthenticationError with wrong root."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"some data")
+
+        with (
+            AegisRaf128L(storage, key, merkle=True) as f,
+            pytest.raises(RAFAuthenticationError, match="Merkle root mismatch"),
+        ):
+            f.verify_root(b"\x00" * 32)
+
+    def test_rebuild_fails_on_tampered_ciphertext(self):
+        """Tamper with raw storage; rebuild raises RAFAuthenticationError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"X" * 1000)
+
+        raw = storage._data
+        tamper_offset = 100
+        if tamper_offset < len(raw):
+            raw[tamper_offset] ^= 0xFF
+
+        with (
+            AegisRaf128L(storage, key, merkle=True) as f,
+            pytest.raises((RAFAuthenticationError, RAFIOError)),
+        ):
+            f.merkle_rebuild()
+
+    def test_verify_detects_hash_mismatch(self):
+        """Corrupt in-memory tree buffer; verify returns chunk index."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"data to verify")
+            f._merkle_buf[0] ^= 0xFF
+            result = f.merkle_verify()
+            assert result is not None
+            assert isinstance(result, int)
+
+    def test_merkle_max_chunks_zero_rejected(self):
+        """merkle_max_chunks=0 raises RAFConfigError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with pytest.raises(RAFConfigError, match="must be > 0"):
+            AegisRaf128L(storage, key, create=True, merkle=True, merkle_max_chunks=0)
+
+    def test_overflow_protection(self):
+        """Absurdly large merkle_max_chunks raises RAFConfigError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with pytest.raises(RAFConfigError, match="overflow"):
+            AegisRaf128L(storage, key, create=True, merkle=True, merkle_max_chunks=2**62)
+
+    def test_rebuild_without_merkle_raises(self):
+        """merkle_rebuild on non-merkle file raises RAFConfigError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with (
+            AegisRaf128L(storage, key, create=True) as f,
+            pytest.raises(RAFConfigError, match="not enabled"),
+        ):
+            f.merkle_rebuild()
+
+    def test_verify_without_merkle_raises(self):
+        """merkle_verify on non-merkle file raises RAFConfigError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with (
+            AegisRaf128L(storage, key, create=True) as f,
+            pytest.raises(RAFConfigError, match="not enabled"),
+        ):
+            f.merkle_verify()
+
+    def test_root_hash_none_without_merkle(self):
+        """root_hash returns None when merkle is not enabled."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True) as f:
+            assert f.root_hash is None
+
+    def test_custom_hasher_wrong_digest_length(self):
+        """Hasher returning wrong digest length causes write to fail."""
+
+        class BadHasher:
+            hash_len = 32
+
+            def hash_leaf(self, chunk, chunk_len, chunk_idx):
+                return b"\x00" * 16  # Wrong: 16 instead of 32
+
+            def hash_parent(self, left, right, level, node_idx):
+                return b"\x00" * 16
+
+            def hash_empty(self, level, node_idx):
+                return b"\x00" * 16
+
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with (
+            pytest.raises((RAFIOError, RAFAuthenticationError)),
+            AegisRaf128L(storage, key, create=True, merkle=BadHasher()) as f,
+        ):
+            f.write(b"test data")
+
+    def test_merkle_eoverflow_suggests_fix(self):
+        """Writing past merkle_max_chunks raises RAFConfigError with hint."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+        chunk_size = 1024
+
+        with AegisRaf128L(
+            storage, key, create=True, chunk_size=chunk_size, merkle=True, merkle_max_chunks=2
+        ) as f:
+            data = b"X" * (chunk_size * 3)
+            with pytest.raises(RAFConfigError, match="merkle_max_chunks"):
+                f.write(data)
+
+    @pytest.mark.parametrize("cls", ALL_RAF_CLASSES, ids=lambda c: c.__name__)
+    def test_merkle_all_variants_roundtrip(self, cls):
+        """merkle=True works with all 6 RAF variants."""
+        storage = BytesIOStorage()
+        key = cls.random_key()
+
+        with cls(storage, key, create=True, merkle=True) as f:
+            f.write(b"variant test data")
+            root = f.root_hash
+            assert root is not None
+            assert len(root) == 32
+
+    @pytest.mark.parametrize("cls", ALL_RAF_CLASSES, ids=lambda c: c.__name__)
+    def test_merkle_all_variants_rebuild(self, cls):
+        """merkle_rebuild reproduces root across all variants."""
+        storage = BytesIOStorage()
+        key = cls.random_key()
+
+        with cls(storage, key, create=True, merkle=True) as f:
+            f.write(b"rebuild variant test")
+            original_root = f.root_hash
+
+        with cls(storage, key, merkle=True) as f:
+            f.merkle_rebuild()
+            assert f.root_hash == original_root
+
+    @pytest.mark.parametrize("cls", ALL_RAF_CLASSES, ids=lambda c: c.__name__)
+    def test_merkle_all_variants_verify(self, cls):
+        """merkle_verify returns None for clean file across all variants."""
+        storage = BytesIOStorage()
+        key = cls.random_key()
+
+        with cls(storage, key, create=True, merkle=True) as f:
+            f.write(b"verify variant test")
+
+        with cls(storage, key, merkle=True) as f:
+            f.merkle_rebuild()
+            assert f.merkle_verify() is None
+
+    def test_custom_hasher_blake2b(self):
+        """Custom BLAKE2b hasher works correctly."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+        hasher = Blake2bMerkleHasher()
+
+        with AegisRaf128L(storage, key, create=True, merkle=hasher) as f:
+            f.write(b"blake2b test data")
+            root = f.root_hash
+            assert root is not None
+            assert len(root) == 32
+
+        with AegisRaf128L(storage, key, merkle=hasher) as f:
+            f.merkle_rebuild()
+            assert f.root_hash == root
+            assert f.merkle_verify() is None
+
+    def test_verify_root_wrong_length(self):
+        """verify_root with wrong length raises ValueError."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"test")
+            with pytest.raises(ValueError, match="must be 32 bytes"):
+                f.verify_root(b"\x00" * 16)
+
+    def test_raf_open_with_merkle(self):
+        """raf_open passes merkle params correctly."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(b"raf_open merkle test")
+            root = f.root_hash
+
+        with raf_open(storage, key, merkle=True) as f:
+            f.verify_root(root)
+
+    def test_sha256_merkle_hasher_is_merkle_hasher(self):
+        """SHA256MerkleHasher satisfies MerkleHasher protocol."""
+        assert isinstance(SHA256MerkleHasher(), MerkleHasher)
+
+    def test_merkle_methods_on_closed_file(self):
+        """All merkle methods raise ValueError on closed file."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        f = AegisRaf128L(storage, key, create=True, merkle=True)
+        f.write(b"test data")
+        f.close()
+
+        with pytest.raises(ValueError, match="closed"):
+            f.merkle_rebuild()
+        with pytest.raises(ValueError, match="closed"):
+            f.merkle_verify()
+        with pytest.raises(ValueError, match="closed"):
+            f.verify_root(b"\x00" * 32)
+        with pytest.raises(ValueError, match="closed"):
+            _ = f.root_hash
+
+    def test_eoverflow_with_absurd_offset_no_merkle_hint(self):
+        """EOVERFLOW from absurd offset doesn't mention merkle_max_chunks."""
+        storage = BytesIOStorage()
+        key = AegisRaf128L.random_key()
+
+        with (
+            AegisRaf128L(storage, key, create=True, merkle=True) as f,
+            pytest.raises(RAFIOError),
+        ):
+            f.write(b"x", offset=2**64 - 1)
 
 
 if __name__ == "__main__":

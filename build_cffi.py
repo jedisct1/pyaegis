@@ -292,6 +292,8 @@ def build_ffi():
                              size_t chunk_len, uint64_t chunk_idx, uint64_t file_size);
             int (*hash_parent)(void *user, uint8_t *out, size_t out_len, const uint8_t *left,
                                const uint8_t *right, uint32_t level, uint64_t node_idx);
+            int (*hash_empty)(void *user, uint8_t *out, size_t out_len,
+                              uint32_t level, uint64_t node_idx);
             void    *user;
             uint8_t *buf;
             size_t   len;
@@ -337,6 +339,8 @@ def build_ffi():
         int aegis128l_raf_get_size(const aegis128l_raf_ctx *ctx, uint64_t *size);
         int aegis128l_raf_sync(aegis128l_raf_ctx *ctx);
         void aegis128l_raf_close(aegis128l_raf_ctx *ctx);
+        int aegis128l_raf_merkle_rebuild(aegis128l_raf_ctx *ctx);
+        int aegis128l_raf_merkle_verify(aegis128l_raf_ctx *ctx, uint64_t *corrupted_chunk);
 
         // AEGIS-128X2 RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis128x2_raf_ctx;
@@ -354,6 +358,8 @@ def build_ffi():
         int aegis128x2_raf_get_size(const aegis128x2_raf_ctx *ctx, uint64_t *size);
         int aegis128x2_raf_sync(aegis128x2_raf_ctx *ctx);
         void aegis128x2_raf_close(aegis128x2_raf_ctx *ctx);
+        int aegis128x2_raf_merkle_rebuild(aegis128x2_raf_ctx *ctx);
+        int aegis128x2_raf_merkle_verify(aegis128x2_raf_ctx *ctx, uint64_t *corrupted_chunk);
 
         // AEGIS-128X4 RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis128x4_raf_ctx;
@@ -371,6 +377,8 @@ def build_ffi():
         int aegis128x4_raf_get_size(const aegis128x4_raf_ctx *ctx, uint64_t *size);
         int aegis128x4_raf_sync(aegis128x4_raf_ctx *ctx);
         void aegis128x4_raf_close(aegis128x4_raf_ctx *ctx);
+        int aegis128x4_raf_merkle_rebuild(aegis128x4_raf_ctx *ctx);
+        int aegis128x4_raf_merkle_verify(aegis128x4_raf_ctx *ctx, uint64_t *corrupted_chunk);
 
         // AEGIS-256 RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis256_raf_ctx;
@@ -388,6 +396,8 @@ def build_ffi():
         int aegis256_raf_get_size(const aegis256_raf_ctx *ctx, uint64_t *size);
         int aegis256_raf_sync(aegis256_raf_ctx *ctx);
         void aegis256_raf_close(aegis256_raf_ctx *ctx);
+        int aegis256_raf_merkle_rebuild(aegis256_raf_ctx *ctx);
+        int aegis256_raf_merkle_verify(aegis256_raf_ctx *ctx, uint64_t *corrupted_chunk);
 
         // AEGIS-256X2 RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis256x2_raf_ctx;
@@ -405,6 +415,8 @@ def build_ffi():
         int aegis256x2_raf_get_size(const aegis256x2_raf_ctx *ctx, uint64_t *size);
         int aegis256x2_raf_sync(aegis256x2_raf_ctx *ctx);
         void aegis256x2_raf_close(aegis256x2_raf_ctx *ctx);
+        int aegis256x2_raf_merkle_rebuild(aegis256x2_raf_ctx *ctx);
+        int aegis256x2_raf_merkle_verify(aegis256x2_raf_ctx *ctx, uint64_t *corrupted_chunk);
 
         // AEGIS-256X4 RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis256x4_raf_ctx;
@@ -422,6 +434,8 @@ def build_ffi():
         int aegis256x4_raf_get_size(const aegis256x4_raf_ctx *ctx, uint64_t *size);
         int aegis256x4_raf_sync(aegis256x4_raf_ctx *ctx);
         void aegis256x4_raf_close(aegis256x4_raf_ctx *ctx);
+        int aegis256x4_raf_merkle_rebuild(aegis256x4_raf_ctx *ctx);
+        int aegis256x4_raf_merkle_verify(aegis256x4_raf_ctx *ctx, uint64_t *corrupted_chunk);
     """)
 
     # Get source files

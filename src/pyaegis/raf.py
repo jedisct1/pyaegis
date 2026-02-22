@@ -9,6 +9,7 @@ efficient random access to large encrypted files without decrypting the entire f
 from __future__ import annotations
 
 import errno as errno_module
+import hashlib
 import os
 from typing import Protocol, runtime_checkable
 
@@ -56,6 +57,46 @@ def _raise_io_error(err: int, operation: str) -> None:
             f"Chunk authentication failed during {operation} (data corrupted or tampered)"
         )
     raise RAFIOError(f"{operation} failed: errno={err}")
+
+
+@runtime_checkable
+class MerkleHasher(Protocol):
+    """Protocol for Merkle tree hash functions."""
+
+    @property
+    def hash_len(self) -> int: ...
+    def hash_leaf(self, chunk: bytes, chunk_len: int, chunk_idx: int) -> bytes: ...
+    def hash_parent(self, left: bytes, right: bytes, level: int, node_idx: int) -> bytes: ...
+    def hash_empty(self, level: int, node_idx: int) -> bytes: ...
+
+
+class SHA256MerkleHasher:
+    """Default Merkle hasher using SHA-256 with domain-separated prefixes."""
+
+    hash_len = 32
+
+    def hash_leaf(self, chunk: bytes, chunk_len: int, chunk_idx: int) -> bytes:
+        h = hashlib.sha256()
+        h.update(b"\x00")
+        h.update(chunk_idx.to_bytes(8, "little"))
+        h.update(chunk[:chunk_len])
+        return h.digest()
+
+    def hash_parent(self, left: bytes, right: bytes, level: int, node_idx: int) -> bytes:
+        h = hashlib.sha256()
+        h.update(b"\x01")
+        h.update(level.to_bytes(4, "little"))
+        h.update(node_idx.to_bytes(8, "little"))
+        h.update(left)
+        h.update(right)
+        return h.digest()
+
+    def hash_empty(self, level: int, node_idx: int) -> bytes:
+        h = hashlib.sha256()
+        h.update(b"\x02")
+        h.update(level.to_bytes(4, "little"))
+        h.update(node_idx.to_bytes(8, "little"))
+        return h.digest()
 
 
 @runtime_checkable
@@ -292,6 +333,56 @@ def _random_callback(user, out, length):
         return -1
 
 
+@ffi.callback("int(void*, uint8_t*, size_t, const uint8_t*, size_t, uint64_t, uint64_t)")
+def _hash_leaf_callback(user, out, out_len, chunk, chunk_len, chunk_idx, file_size):
+    try:
+        hasher = ffi.from_handle(user)
+        digest = hasher.hash_leaf(bytes(ffi.buffer(chunk, chunk_len)), chunk_len, chunk_idx)
+        if len(digest) != out_len:
+            ffi.errno = errno_module.EINVAL
+            return -1
+        ffi.memmove(out, digest, out_len)
+        return 0
+    except Exception:
+        ffi.errno = errno_module.EINVAL
+        return -1
+
+
+@ffi.callback("int(void*, uint8_t*, size_t, const uint8_t*, const uint8_t*, uint32_t, uint64_t)")
+def _hash_parent_callback(user, out, out_len, left, right, level, node_idx):
+    try:
+        hasher = ffi.from_handle(user)
+        digest = hasher.hash_parent(
+            bytes(ffi.buffer(left, out_len)),
+            bytes(ffi.buffer(right, out_len)),
+            level,
+            node_idx,
+        )
+        if len(digest) != out_len:
+            ffi.errno = errno_module.EINVAL
+            return -1
+        ffi.memmove(out, digest, out_len)
+        return 0
+    except Exception:
+        ffi.errno = errno_module.EINVAL
+        return -1
+
+
+@ffi.callback("int(void*, uint8_t*, size_t, uint32_t, uint64_t)")
+def _hash_empty_callback(user, out, out_len, level, node_idx):
+    try:
+        hasher = ffi.from_handle(user)
+        digest = hasher.hash_empty(level, node_idx)
+        if len(digest) != out_len:
+            ffi.errno = errno_module.EINVAL
+            return -1
+        ffi.memmove(out, digest, out_len)
+        return 0
+    except Exception:
+        ffi.errno = errno_module.EINVAL
+        return -1
+
+
 def raf_probe(storage: RAFStorage) -> tuple[int, int, int]:
     """Probe an encrypted file to determine its parameters.
 
@@ -353,6 +444,8 @@ class _AEGISRAFBase:
     _sync_func = None
     _close_func = None
     _scratch_size_func = None
+    _merkle_rebuild_func = None
+    _merkle_verify_func = None
 
     def __init__(
         self,
@@ -362,6 +455,8 @@ class _AEGISRAFBase:
         chunk_size: int = 65536,
         create: bool = False,
         truncate: bool = False,
+        merkle: bool | MerkleHasher = False,
+        merkle_max_chunks: int | None = None,
         _probe_result: tuple[int, int] | None = None,
     ):
         """Open or create an encrypted RAF file.
@@ -373,6 +468,10 @@ class _AEGISRAFBase:
                        used only for create; ignored when opening existing files)
             create: If True, create a new file (fails if exists without truncate)
             truncate: If True with create, overwrite existing file
+            merkle: Enable Merkle tree. True uses SHA256MerkleHasher, or pass
+                    a custom MerkleHasher instance.
+            merkle_max_chunks: Maximum number of chunks the Merkle tree can track.
+                              Defaults to 16384. Must be > 0 when merkle is enabled.
             _probe_result: Internal. Tuple of (alg_id, chunk_size) from prior probe,
                           to avoid double-probing when called via raf_open().
 
@@ -426,11 +525,48 @@ class _AEGISRAFBase:
             if truncate:
                 flags |= lib.AEGIS_RAF_TRUNCATE
 
+        self._merkle_cfg = None
+        self._merkle_hasher = None
+        self._merkle_buf = None
+        self._merkle_hasher_handle = None
+        self._merkle_max_chunks = None
+
         self._config = ffi.new("aegis_raf_config*")
         self._config.scratch = self._scratch
         self._config.merkle = ffi.NULL
         self._config.chunk_size = actual_chunk_size
         self._config.flags = flags
+
+        if merkle is not False:
+            hasher = SHA256MerkleHasher() if merkle is True else merkle
+            max_chunks = merkle_max_chunks if merkle_max_chunks is not None else 16384
+            if max_chunks <= 0:
+                raise RAFConfigError("merkle_max_chunks must be > 0")
+
+            self._merkle_cfg = ffi.new("aegis_raf_merkle_config*")
+            self._merkle_cfg.hash_len = hasher.hash_len
+            self._merkle_cfg.max_chunks = max_chunks
+
+            buf_size = lib.aegis_raf_merkle_buffer_size(self._merkle_cfg)
+            size_max = int(ffi.cast("size_t", -1))
+            if buf_size >= size_max:
+                raise RAFConfigError("Merkle tree buffer size overflow")
+
+            self._merkle_buf = bytearray(buf_size)
+            self._merkle_hasher_handle = ffi.new_handle(hasher)
+
+            self._merkle_cfg.hash_leaf = _hash_leaf_callback
+            self._merkle_cfg.hash_parent = _hash_parent_callback
+            self._merkle_cfg.hash_empty = _hash_empty_callback
+            self._merkle_cfg.user = self._merkle_hasher_handle
+            self._merkle_cfg.buf = ffi.from_buffer(self._merkle_buf)
+            self._merkle_cfg.len = buf_size
+            self._merkle_cfg.max_chunks = max_chunks
+            self._merkle_cfg.hash_len = hasher.hash_len
+
+            self._merkle_hasher = hasher
+            self._merkle_max_chunks = max_chunks
+            self._config.merkle = self._merkle_cfg
 
         if create:
             result = self._create_func(self._ctx, self._io, self._rng, self._config, key)
@@ -467,6 +603,21 @@ class _AEGISRAFBase:
         scratch.len = size
 
         return raw, scratch
+
+    def _check_merkle_eoverflow(self, err: int, offset: int, length: int) -> None:
+        """Raise RAFConfigError if EOVERFLOW is due to merkle capacity."""
+        if err != errno_module.EOVERFLOW or self._merkle_cfg is None:
+            return
+        new_end = offset + length
+        if new_end > 0xFFFFFFFFFFFFFFFF:
+            return
+        chunk_size = self._config.chunk_size
+        new_num_chunks = (new_end + chunk_size - 1) // chunk_size
+        if new_num_chunks > self._merkle_max_chunks:
+            raise RAFConfigError(
+                f"Write exceeds merkle_max_chunks ({self._merkle_max_chunks}). "
+                "Open the file with a larger merkle_max_chunks."
+            )
 
     @classmethod
     def random_key(cls) -> bytes:
@@ -608,7 +759,9 @@ class _AEGISRAFBase:
         result = self._write_func(self._ctx, bytes_written, data, len(data), offset)
 
         if result != 0:
-            _raise_io_error(ffi.errno, "write")
+            err = ffi.errno
+            self._check_merkle_eoverflow(err, offset, len(data))
+            _raise_io_error(err, "write")
 
         self._position = offset + bytes_written[0]
         return bytes_written[0]
@@ -636,7 +789,9 @@ class _AEGISRAFBase:
         result = self._write_func(self._ctx, bytes_written, data, len(data), offset)
 
         if result != 0:
-            _raise_io_error(ffi.errno, "pwrite")
+            err = ffi.errno
+            self._check_merkle_eoverflow(err, offset, len(data))
+            _raise_io_error(err, "pwrite")
 
         return bytes_written[0]
 
@@ -732,6 +887,96 @@ class _AEGISRAFBase:
         """True if the file has been closed."""
         return self._closed
 
+    def _check_merkle_enabled(self) -> None:
+        if self._merkle_cfg is None:
+            raise RAFConfigError("Merkle tree is not enabled on this file")
+
+    def merkle_rebuild(self) -> None:
+        """Rebuild Merkle tree by reading and re-hashing every chunk.
+
+        Must be called after opening an existing file with merkle enabled.
+        On a newly created file, the tree is already populated by write().
+
+        Raises:
+            RAFConfigError: Merkle not enabled on this instance.
+            RAFAuthenticationError: A chunk failed AEGIS decryption.
+            RAFIOError: Other I/O or hash callback failure.
+        """
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        self._check_merkle_enabled()
+        result = self._merkle_rebuild_func(self._ctx)
+        if result != 0:
+            _raise_io_error(ffi.errno, "merkle_rebuild")
+
+    def merkle_verify(self) -> int | None:
+        """Verify every chunk's hash against the in-memory Merkle tree.
+
+        The tree must have been populated first, either by writing data
+        (which updates the tree automatically) or by calling merkle_rebuild()
+        after opening an existing file.
+
+        Returns:
+            None if all chunks match.
+            Index of the first corrupted chunk otherwise.
+
+        Raises:
+            RAFConfigError: Merkle not enabled on this instance.
+            RAFIOError: I/O or hash callback failure.
+        """
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        self._check_merkle_enabled()
+        corrupted = ffi.new("uint64_t*")
+        result = self._merkle_verify_func(self._ctx, corrupted)
+        if result == 0:
+            return None
+        err = ffi.errno
+        if _check_auth_error(err):
+            return corrupted[0]
+        _raise_io_error(err, "merkle_verify")
+
+    def verify_root(self, expected_root: bytes) -> None:
+        """Rebuild the Merkle tree and verify the root matches expected_root.
+
+        This is the high-level "reopen and check" workflow:
+        1. Rebuilds the tree from file contents (decrypts every chunk).
+        2. Compares the computed root against expected_root.
+
+        Raises:
+            RAFAuthenticationError: Root mismatch or chunk decryption failure.
+            RAFConfigError: Merkle not enabled.
+            RAFIOError: I/O failure.
+            ValueError: expected_root length doesn't match hash_len.
+        """
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        if self._merkle_hasher is None:
+            raise RAFConfigError("Merkle tree is not enabled on this file")
+        if len(expected_root) != self._merkle_hasher.hash_len:
+            raise ValueError(
+                f"expected_root must be {self._merkle_hasher.hash_len} bytes, "
+                f"got {len(expected_root)}"
+            )
+        self.merkle_rebuild()
+        actual = self.root_hash
+        if actual != expected_root:
+            raise RAFAuthenticationError(
+                "Merkle root mismatch: file contents do not match expected root"
+            )
+
+    @property
+    def root_hash(self) -> bytes | None:
+        """Current Merkle root hash, or None if merkle is not enabled."""
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+        if self._merkle_cfg is None:
+            return None
+        ptr = lib.aegis_raf_merkle_root(self._merkle_cfg)
+        if ptr == ffi.NULL:
+            return None
+        return bytes(ffi.buffer(ptr, self._merkle_hasher.hash_len))
+
 
 class AegisRaf128L(_AEGISRAFBase):
     """RAF encrypted file using AEGIS-128L."""
@@ -750,6 +995,8 @@ class AegisRaf128L(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis128l_raf_sync)
     _close_func = staticmethod(lib.aegis128l_raf_close)
     _scratch_size_func = staticmethod(lib.aegis128l_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis128l_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis128l_raf_merkle_verify)
 
 
 class AegisRaf256(_AEGISRAFBase):
@@ -769,6 +1016,8 @@ class AegisRaf256(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis256_raf_sync)
     _close_func = staticmethod(lib.aegis256_raf_close)
     _scratch_size_func = staticmethod(lib.aegis256_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis256_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis256_raf_merkle_verify)
 
 
 class AegisRaf128X2(_AEGISRAFBase):
@@ -788,6 +1037,8 @@ class AegisRaf128X2(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis128x2_raf_sync)
     _close_func = staticmethod(lib.aegis128x2_raf_close)
     _scratch_size_func = staticmethod(lib.aegis128x2_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis128x2_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis128x2_raf_merkle_verify)
 
 
 class AegisRaf128X4(_AEGISRAFBase):
@@ -807,6 +1058,8 @@ class AegisRaf128X4(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis128x4_raf_sync)
     _close_func = staticmethod(lib.aegis128x4_raf_close)
     _scratch_size_func = staticmethod(lib.aegis128x4_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis128x4_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis128x4_raf_merkle_verify)
 
 
 class AegisRaf256X2(_AEGISRAFBase):
@@ -826,6 +1079,8 @@ class AegisRaf256X2(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis256x2_raf_sync)
     _close_func = staticmethod(lib.aegis256x2_raf_close)
     _scratch_size_func = staticmethod(lib.aegis256x2_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis256x2_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis256x2_raf_merkle_verify)
 
 
 class AegisRaf256X4(_AEGISRAFBase):
@@ -845,6 +1100,8 @@ class AegisRaf256X4(_AEGISRAFBase):
     _sync_func = staticmethod(lib.aegis256x4_raf_sync)
     _close_func = staticmethod(lib.aegis256x4_raf_close)
     _scratch_size_func = staticmethod(lib.aegis256x4_raf_scratch_size)
+    _merkle_rebuild_func = staticmethod(lib.aegis256x4_raf_merkle_rebuild)
+    _merkle_verify_func = staticmethod(lib.aegis256x4_raf_merkle_verify)
 
 
 _ALG_MAP = {
@@ -857,7 +1114,14 @@ _ALG_MAP = {
 }
 
 
-def raf_open(storage: RAFStorage, key: bytes, **kwargs) -> _AEGISRAFBase:
+def raf_open(
+    storage: RAFStorage,
+    key: bytes,
+    *,
+    merkle: bool | MerkleHasher = False,
+    merkle_max_chunks: int | None = None,
+    **kwargs,
+) -> _AEGISRAFBase:
     """Open an encrypted file, auto-detecting the algorithm.
 
     Probes the file header to determine which AEGIS variant to use,
@@ -866,6 +1130,9 @@ def raf_open(storage: RAFStorage, key: bytes, **kwargs) -> _AEGISRAFBase:
     Args:
         storage: Backing storage
         key: Master key (must match the variant's key size)
+        merkle: Enable Merkle tree. True uses SHA256MerkleHasher, or pass
+                a custom MerkleHasher instance.
+        merkle_max_chunks: Maximum number of chunks the Merkle tree can track.
         **kwargs: Passed to the RAF class constructor
 
     Returns:
@@ -881,4 +1148,11 @@ def raf_open(storage: RAFStorage, key: bytes, **kwargs) -> _AEGISRAFBase:
     if cls is None:
         raise RAFError(f"Unknown algorithm ID: {alg_id}")
 
-    return cls(storage, key, _probe_result=(alg_id, chunk_size), **kwargs)
+    return cls(
+        storage,
+        key,
+        merkle=merkle,
+        merkle_max_chunks=merkle_max_chunks,
+        _probe_result=(alg_id, chunk_size),
+        **kwargs,
+    )
