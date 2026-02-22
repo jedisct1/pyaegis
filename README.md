@@ -26,17 +26,17 @@ Python bindings for libaegis - high-performance AEGIS authenticated encryption.
       - [Streaming Decryption](#streaming-decryption)
     - [Stream Generation](#stream-generation)
     - [Message Authentication Code (MAC)](#message-authentication-code-mac)
+  - [Random Access Files (RAF)](#random-access-files-raf)
+    - [Basic Usage](#basic-usage)
+    - [File-based Storage](#file-based-storage)
+    - [Random Access Operations](#random-access-operations)
+    - [Auto-detecting Algorithm](#auto-detecting-algorithm)
+    - [Available RAF Classes](#available-raf-classes)
+    - [Merkle Tree Integrity Verification](#merkle-tree-integrity-verification)
+    - [Storage Backends](#storage-backends)
   - [Error Handling](#error-handling)
   - [Performance](#performance)
   - [Security Considerations](#security-considerations)
-    - [Random Access Files (RAF)](#random-access-files-raf)
-      - [Basic Usage](#basic-usage)
-      - [File-based Storage](#file-based-storage)
-      - [Random Access Operations](#random-access-operations)
-      - [Auto-detecting Algorithm](#auto-detecting-algorithm)
-      - [Available RAF Classes](#available-raf-classes)
-      - [Merkle Tree Integrity Verification](#merkle-tree-integrity-verification)
-      - [Storage Backends](#storage-backends)
 
 ## Overview
 
@@ -327,44 +327,11 @@ except DecryptionError:
 
 Important: The same key must NOT be used for both MAC and encryption operations.
 
-## Error Handling
-
-```python
-from pyaegis import Aegis128L, DecryptionError
-
-cipher = Aegis128L()
-key = cipher.random_key()
-nonce = cipher.random_nonce()
-
-try:
-    # This will raise DecryptionError if authentication fails
-    plaintext = cipher.decrypt(key, nonce, tampered_ciphertext)
-except DecryptionError:
-    print("Authentication failed - ciphertext was tampered with!")
-```
-
-## Performance
-
-The library automatically detects CPU features at runtime and uses the most optimized implementation available:
-
-- AES-NI on Intel/AMD processors
-- ARM Crypto Extensions on ARM processors
-- AVX2 and AVX-512 for multi-lane variants
-- Software fallback for other platforms
-
-Multi-lane variants (X2, X4) provide higher throughput on systems with appropriate SIMD support.
-
-## Security Considerations
-
-- Nonce Uniqueness: Never reuse a nonce with the same key. If you can't maintain a counter, use `random_nonce()` for each message.
-- Key Management: Use `random_key()` to generate cryptographically secure keys. Keep keys secret.
-- AAD: Additional authenticated data is not encrypted but is protected against tampering.
-
-### Random Access Files (RAF)
+## Random Access Files (RAF)
 
 The RAF API provides encrypted file storage with random access capabilities. Files are divided into fixed-size chunks, each independently encrypted, enabling efficient random access without decrypting the entire file.
 
-#### Basic Usage
+### Basic Usage
 
 ```python
 from pyaegis import AegisRaf128L, BytesIOStorage
@@ -383,7 +350,7 @@ with AegisRaf128L(storage, key) as f:
     print(f.read())  # b'Hello, World! More data.'
 ```
 
-#### File-based Storage
+### File-based Storage
 
 ```python
 from pyaegis import AegisRaf128L, FileStorage
@@ -401,7 +368,7 @@ with FileStorage("/path/to/file.raf", "r+b") as storage, \
     print(f.read())
 ```
 
-#### Random Access Operations
+### Random Access Operations
 
 ```python
 from pyaegis import AegisRaf128L, BytesIOStorage
@@ -426,7 +393,7 @@ with AegisRaf128L(storage, key, create=True) as f:
     print(f.read())  # b'012ABC6789'
 ```
 
-#### Auto-detecting Algorithm
+### Auto-detecting Algorithm
 
 ```python
 from pyaegis import raf_open, raf_probe, BytesIOStorage, AegisRaf256
@@ -447,14 +414,14 @@ with raf_open(storage, key) as f:
     print(f.read())  # b'data'
 ```
 
-#### Available RAF Classes
+### Available RAF Classes
 
 - `AegisRaf128L`: 16-byte key
 - `AegisRaf256`: 32-byte key
 - `AegisRaf128X2`, `AegisRaf128X4`: 16-byte key, multi-lane
 - `AegisRaf256X2`, `AegisRaf256X4`: 32-byte key, multi-lane
 
-#### Merkle Tree Integrity Verification
+### Merkle Tree Integrity Verification
 
 RAF files can optionally maintain a Merkle hash tree over their chunks. When enabled, every write automatically updates a binary hash tree in memory. The root hash can be stored externally (e.g. in a database) and later used to verify file integrity without trusting the storage layer.
 
@@ -517,9 +484,68 @@ with raf_open(storage, key, merkle=True) as f:
     f.verify_root(expected_root)
 ```
 
-#### Storage Backends
+### Storage Backends
 
 - `FileStorage`: File-based storage using `os.pread`/`os.pwrite` (Unix only)
 - `BytesIOStorage`: In-memory storage for testing
 
 Custom backends can be implemented by following the `RAFStorage` protocol.
+
+## Error Handling
+
+AEAD and streaming operations raise `DecryptionError` on authentication failure:
+
+```python
+from pyaegis import Aegis128L, DecryptionError
+
+cipher = Aegis128L()
+key = cipher.random_key()
+nonce = cipher.random_nonce()
+
+try:
+    plaintext = cipher.decrypt(key, nonce, tampered_ciphertext)
+except DecryptionError:
+    print("Authentication failed - ciphertext was tampered with!")
+```
+
+RAF operations use a separate exception hierarchy:
+
+- `RAFAuthenticationError` -- chunk authentication failed (corruption or tampering)
+- `RAFIOError` -- I/O failure during read/write
+- `RAFConfigError` -- invalid configuration (bad chunk size, Merkle overflow, etc.)
+
+```python
+from pyaegis import AegisRaf128L, BytesIOStorage, RAFAuthenticationError
+
+storage = BytesIOStorage()
+key = AegisRaf128L.random_key()
+
+with AegisRaf128L(storage, key, create=True) as f:
+    f.write(b"data")
+
+try:
+    wrong_key = AegisRaf128L.random_key()
+    with AegisRaf128L(storage, wrong_key) as f:
+        f.read()
+except RAFAuthenticationError:
+    print("Wrong key or corrupted file!")
+```
+
+All exceptions inherit from `AegisError`.
+
+## Performance
+
+The library automatically detects CPU features at runtime and uses the most optimized implementation available:
+
+- AES-NI on Intel/AMD processors
+- ARM Crypto Extensions on ARM processors
+- AVX2 and AVX-512 for multi-lane variants
+- Software fallback for other platforms
+
+Multi-lane variants (X2, X4) provide higher throughput on systems with appropriate SIMD support.
+
+## Security Considerations
+
+- Nonce Uniqueness: Never reuse a nonce with the same key. If you can't maintain a counter, use `random_nonce()` for each message.
+- Key Management: Use `random_key()` to generate cryptographically secure keys. Keep keys secret.
+- AAD: Additional authenticated data is not encrypted but is protected against tampering.
