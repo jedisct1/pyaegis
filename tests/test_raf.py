@@ -717,6 +717,14 @@ class Blake2bMerkleHasher:
         h.update(node_idx.to_bytes(8, "little"))
         return h.digest()
 
+    def hash_commitment(self, structural_root: bytes, ctx: bytes, file_size: int) -> bytes:
+        h = hashlib.blake2b(digest_size=32)
+        h.update(b"\x03")
+        h.update(structural_root)
+        h.update(ctx)
+        h.update(file_size.to_bytes(8, "little"))
+        return h.digest()
+
 
 class TestMerkle:
     """Tests for Merkle tree support in RAF."""
@@ -745,17 +753,20 @@ class TestMerkle:
             assert root1 != root2
 
     def test_root_hash_deterministic(self):
-        """Same data with same hasher produces same root."""
+        """Same file rewritten with same data produces same root commitment."""
+        storage = BytesIOStorage()
         key = AegisRaf128L.random_key()
         data = b"deterministic content"
-        roots = []
-        for _ in range(2):
-            storage = BytesIOStorage()
-            with AegisRaf128L(storage, key, create=True, merkle=True, truncate=True) as f:
-                f.write(data)
-                roots.append(f.root_hash)
 
-        assert roots[0] == roots[1]
+        with AegisRaf128L(storage, key, create=True, merkle=True) as f:
+            f.write(data)
+            root1 = f.root_hash
+
+        with AegisRaf128L(storage, key, merkle=True) as f:
+            f.merkle_rebuild()
+            root2 = f.root_hash
+
+        assert root1 == root2
 
     def test_rebuild_reproduces_root(self):
         """Close and reopen: rebuild reproduces the same root hash."""
@@ -898,6 +909,9 @@ class TestMerkle:
                 return b"\x00" * 16
 
             def hash_empty(self, level, node_idx):
+                return b"\x00" * 16
+
+            def hash_commitment(self, structural_root, ctx, file_size):
                 return b"\x00" * 16
 
         storage = BytesIOStorage()

@@ -68,6 +68,7 @@ class MerkleHasher(Protocol):
     def hash_leaf(self, chunk: bytes, chunk_len: int, chunk_idx: int) -> bytes: ...
     def hash_parent(self, left: bytes, right: bytes, level: int, node_idx: int) -> bytes: ...
     def hash_empty(self, level: int, node_idx: int) -> bytes: ...
+    def hash_commitment(self, structural_root: bytes, ctx: bytes, file_size: int) -> bytes: ...
 
 
 class SHA256MerkleHasher:
@@ -96,6 +97,14 @@ class SHA256MerkleHasher:
         h.update(b"\x02")
         h.update(level.to_bytes(4, "little"))
         h.update(node_idx.to_bytes(8, "little"))
+        return h.digest()
+
+    def hash_commitment(self, structural_root: bytes, ctx: bytes, file_size: int) -> bytes:
+        h = hashlib.sha256()
+        h.update(b"\x03")
+        h.update(structural_root)
+        h.update(ctx)
+        h.update(file_size.to_bytes(8, "little"))
         return h.digest()
 
 
@@ -333,8 +342,8 @@ def _random_callback(user, out, length):
         return -1
 
 
-@ffi.callback("int(void*, uint8_t*, size_t, const uint8_t*, size_t, uint64_t, uint64_t)")
-def _hash_leaf_callback(user, out, out_len, chunk, chunk_len, chunk_idx, file_size):
+@ffi.callback("int(void*, uint8_t*, size_t, const uint8_t*, size_t, uint64_t)")
+def _hash_leaf_callback(user, out, out_len, chunk, chunk_len, chunk_idx):
     try:
         hasher = ffi.from_handle(user)
         digest = hasher.hash_leaf(bytes(ffi.buffer(chunk, chunk_len)), chunk_len, chunk_idx)
@@ -373,6 +382,23 @@ def _hash_empty_callback(user, out, out_len, level, node_idx):
     try:
         hasher = ffi.from_handle(user)
         digest = hasher.hash_empty(level, node_idx)
+        if len(digest) != out_len:
+            ffi.errno = errno_module.EINVAL
+            return -1
+        ffi.memmove(out, digest, out_len)
+        return 0
+    except Exception:
+        ffi.errno = errno_module.EINVAL
+        return -1
+
+
+@ffi.callback("int(void*, uint8_t*, size_t, const uint8_t*, const uint8_t*, size_t, uint64_t)")
+def _hash_commitment_callback(user, out, out_len, structural_root, ctx, ctx_len, file_size):
+    try:
+        hasher = ffi.from_handle(user)
+        root_bytes = bytes(ffi.buffer(structural_root, out_len))
+        ctx_bytes = bytes(ffi.buffer(ctx, ctx_len)) if ctx != ffi.NULL else b""
+        digest = hasher.hash_commitment(root_bytes, ctx_bytes, file_size)
         if len(digest) != out_len:
             ffi.errno = errno_module.EINVAL
             return -1
@@ -448,6 +474,7 @@ class _AEGISRAFBase:
     _scratch_size_func = None
     _merkle_rebuild_func = None
     _merkle_verify_func = None
+    _merkle_commitment_func = None
 
     def __init__(
         self,
@@ -565,6 +592,7 @@ class _AEGISRAFBase:
             self._merkle_cfg.hash_leaf = _hash_leaf_callback
             self._merkle_cfg.hash_parent = _hash_parent_callback
             self._merkle_cfg.hash_empty = _hash_empty_callback
+            self._merkle_cfg.hash_commitment = _hash_commitment_callback
             self._merkle_cfg.user = self._merkle_hasher_handle
             self._merkle_cfg.buf = ffi.from_buffer(self._merkle_buf)
             self._merkle_cfg.len = buf_size
@@ -974,15 +1002,17 @@ class _AEGISRAFBase:
 
     @property
     def root_hash(self) -> bytes | None:
-        """Current Merkle root hash, or None if merkle is not enabled."""
+        """Current Merkle root commitment hash, or None if merkle is not enabled."""
         if self._closed:
             raise ValueError("I/O operation on closed file")
         if self._merkle_cfg is None:
             return None
-        ptr = lib.aegis_raf_merkle_root(self._merkle_cfg)
-        if ptr == ffi.NULL:
-            return None
-        return bytes(ffi.buffer(ptr, self._merkle_hasher.hash_len))
+        hash_len = self._merkle_hasher.hash_len
+        out = ffi.new(f"uint8_t[{hash_len}]")
+        result = self._merkle_commitment_func(self._ctx, out, hash_len)
+        if result != 0:
+            _raise_io_error(ffi.errno, "merkle_commitment")
+        return bytes(ffi.buffer(out, hash_len))
 
 
 class AegisRaf128L(_AEGISRAFBase):
@@ -1004,6 +1034,7 @@ class AegisRaf128L(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis128l_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis128l_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis128l_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis128l_raf_merkle_commitment)
 
 
 class AegisRaf256(_AEGISRAFBase):
@@ -1025,6 +1056,7 @@ class AegisRaf256(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis256_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis256_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis256_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis256_raf_merkle_commitment)
 
 
 class AegisRaf128X2(_AEGISRAFBase):
@@ -1046,6 +1078,7 @@ class AegisRaf128X2(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis128x2_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis128x2_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis128x2_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis128x2_raf_merkle_commitment)
 
 
 class AegisRaf128X4(_AEGISRAFBase):
@@ -1067,6 +1100,7 @@ class AegisRaf128X4(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis128x4_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis128x4_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis128x4_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis128x4_raf_merkle_commitment)
 
 
 class AegisRaf256X2(_AEGISRAFBase):
@@ -1088,6 +1122,7 @@ class AegisRaf256X2(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis256x2_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis256x2_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis256x2_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis256x2_raf_merkle_commitment)
 
 
 class AegisRaf256X4(_AEGISRAFBase):
@@ -1109,6 +1144,7 @@ class AegisRaf256X4(_AEGISRAFBase):
     _scratch_size_func = staticmethod(lib.aegis256x4_raf_scratch_size)
     _merkle_rebuild_func = staticmethod(lib.aegis256x4_raf_merkle_rebuild)
     _merkle_verify_func = staticmethod(lib.aegis256x4_raf_merkle_verify)
+    _merkle_commitment_func = staticmethod(lib.aegis256x4_raf_merkle_commitment)
 
 
 _ALG_MAP = {

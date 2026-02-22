@@ -302,7 +302,7 @@ class TestFuzzMerkleConsistency:
 
     @pytest.mark.parametrize("seed", range(10))
     def test_merkle_root_deterministic_across_write_patterns(self, seed):
-        """Same final content produces same root regardless of write pattern."""
+        """Different write patterns for same content produce same root after rebuild."""
         rng = random.Random(seed)
         key = AegisRaf128L.random_key()
         total_size = rng.randint(100, 4000)
@@ -316,11 +316,15 @@ class TestFuzzMerkleConsistency:
             f.write(full_data)
             root1 = f.root_hash
 
-        # Pattern 2: chunked writes at various sizes
-        s2 = BytesIOStorage()
-        with AegisRaf128L(
-            s2, key, create=True, chunk_size=1024, merkle=True, merkle_max_chunks=64
-        ) as f:
+        # Reopen and rebuild - must match
+        with AegisRaf128L(s1, key, merkle=True, merkle_max_chunks=64) as f:
+            f.merkle_rebuild()
+            assert f.root_hash == root1
+
+        # Pattern 2: chunked writes to same file (truncate and rewrite)
+        with AegisRaf128L(s1, key, merkle=True, merkle_max_chunks=64) as f:
+            f.merkle_rebuild()
+            f.truncate(0)
             pos = 0
             while pos < total_size:
                 chunk = rng.randint(1, min(500, total_size - pos))
@@ -328,14 +332,11 @@ class TestFuzzMerkleConsistency:
                 pos += chunk
             root2 = f.root_hash
 
-        # Pattern 3: pwrite in random order
-        s3 = BytesIOStorage()
-        with AegisRaf128L(
-            s3, key, create=True, chunk_size=1024, merkle=True, merkle_max_chunks=64
-        ) as f:
-            # First fill with zeros to set size
+        # Pattern 3: pwrite in random order to same file
+        with AegisRaf128L(s1, key, merkle=True, merkle_max_chunks=64) as f:
+            f.merkle_rebuild()
+            f.truncate(0)
             f.write(b"\x00" * total_size)
-            # Overwrite in random-order chunks
             offsets = list(range(0, total_size, 100))
             rng.shuffle(offsets)
             for off in offsets:
@@ -1036,4 +1037,12 @@ class Blake2bMerkleHasher:
         h.update(b"\x02")
         h.update(level.to_bytes(4, "little"))
         h.update(node_idx.to_bytes(8, "little"))
+        return h.digest()
+
+    def hash_commitment(self, structural_root: bytes, ctx: bytes, file_size: int) -> bytes:
+        h = hashlib.blake2b(digest_size=32)
+        h.update(b"\x03")
+        h.update(structural_root)
+        h.update(ctx)
+        h.update(file_size.to_bytes(8, "little"))
         return h.digest()

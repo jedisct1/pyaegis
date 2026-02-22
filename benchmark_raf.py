@@ -207,9 +207,7 @@ def run_io_benchmarks(raf_cls, variant_name, file_sizes, chunk_size=65536):
             return 200
 
     header = (
-        f"{'File Size':<12} "
-        f"{'Seq Write':<14} {'Seq Read':<14} "
-        f"{'Rand Read':<14} {'Rand Write':<14}"
+        f"{'File Size':<12} {'Seq Write':<14} {'Seq Read':<14} {'Rand Read':<14} {'Rand Write':<14}"
     )
 
     for merkle in [False, True]:
@@ -228,11 +226,7 @@ def run_io_benchmarks(raf_cls, variant_name, file_sizes, chunk_size=65536):
             rnd_w = bench_random_write(raf_cls, file_size, chunk_size, merkle, rand_ops)
 
             size_str = format_size(file_size)
-            print(
-                f"{size_str:<12} "
-                f"{seq_w:<14} {seq_r:<14} "
-                f"{rnd_r:<14} {rnd_w:<14}"
-            )
+            print(f"{size_str:<12} {seq_w:<14} {seq_r:<14} {rnd_r:<14} {rnd_w:<14}")
 
 
 def run_merkle_benchmarks(raf_cls, variant_name, file_sizes, chunk_size=65536):
@@ -251,11 +245,7 @@ def run_merkle_benchmarks(raf_cls, variant_name, file_sizes, chunk_size=65536):
         vf_tp, vf_t = bench_merkle_verify(raf_cls, file_size, chunk_size)
 
         size_str = format_size(file_size)
-        print(
-            f"{size_str:<12} {num_chunks:<10} "
-            f"{rb_tp:<14} {rb_t:<12} "
-            f"{vf_tp:<14} {vf_t:<12}"
-        )
+        print(f"{size_str:<12} {num_chunks:<10} {rb_tp:<14} {rb_t:<12} {vf_tp:<14} {vf_t:<12}")
 
 
 def main():
@@ -275,7 +265,7 @@ def main():
 
     print("RAF Benchmark - Encrypted Random Access File I/O")
     print(f"File sizes: {', '.join(format_size(s) for s in all_sizes)}")
-    print(f"Storage: in-memory (BytesIOStorage)")
+    print("Storage: in-memory (BytesIOStorage)")
 
     for raf_cls, name in variants:
         run_io_benchmarks(raf_cls, name, all_sizes)
