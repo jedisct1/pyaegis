@@ -421,9 +421,9 @@ with raf_open(storage, key) as f:
 - `AegisRaf128X2`, `AegisRaf128X4`: 16-byte key, multi-lane
 - `AegisRaf256X2`, `AegisRaf256X4`: 32-byte key, multi-lane
 
-### Merkle Tree Integrity Verification
+### Merkle Tree Commitment
 
-RAF files can optionally maintain a Merkle hash tree over their chunks. When enabled, every write automatically updates a binary hash tree in memory. The root hash can be stored externally (e.g. in a database) and later used to verify file integrity without trusting the storage layer.
+Individual RAF chunks are already authenticated by their AEAD tags. Optionally, a Merkle hash tree can track whole-file commitment: every write automatically updates a binary hash tree in memory, maintaining a single root hash that represents the current plaintext content of the entire file. This root can be stored externally (e.g. in a database) and later used to detect any modification to the file.
 
 ```python
 from pyaegis import AegisRaf128L, BytesIOStorage
