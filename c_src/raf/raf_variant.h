@@ -28,7 +28,6 @@ derive_keys(uint8_t *enc_key, uint8_t *hdr_key, const uint8_t *master_key,
 
     memcpy(enc_key, key_material, KEYBYTES);
     memcpy(hdr_key, key_material + KEYBYTES, KEYBYTES);
-    memset(key_material, 0, sizeof key_material);
 }
 
 static int
@@ -38,14 +37,11 @@ compute_header_mac(uint8_t mac[AEGIS_RAF_TAG_BYTES], const uint8_t hdr[AEGIS_RAF
     MAC_STATE_TYPE st;
     VARIANT_mac_init(&st, hdr_key, NULL);
     if (VARIANT_mac_update(&st, hdr, AEGIS_RAF_HEADER_SIZE - AEGIS_RAF_TAG_BYTES) != 0) {
-        memset(&st, 0, sizeof st);
         return -1;
     }
     if (VARIANT_mac_final(&st, mac, AEGIS_RAF_TAG_BYTES) != 0) {
-        memset(&st, 0, sizeof st);
         return -1;
     }
-    memset(&st, 0, sizeof st);
     return 0;
 }
 
@@ -57,12 +53,10 @@ verify_header_mac(const uint8_t hdr[AEGIS_RAF_HEADER_SIZE], const uint8_t *hdr_k
 
     VARIANT_mac_init(&st, hdr_key, NULL);
     if (VARIANT_mac_update(&st, hdr, AEGIS_RAF_HEADER_SIZE - AEGIS_RAF_TAG_BYTES) != 0) {
-        memset(&st, 0, sizeof st);
         return -1;
     }
     ret = VARIANT_mac_verify(&st, hdr + AEGIS_RAF_HEADER_SIZE - AEGIS_RAF_TAG_BYTES,
                              AEGIS_RAF_TAG_BYTES);
-    memset(&st, 0, sizeof st);
     if (ret != 0) {
         errno = EBADMSG;
     }
@@ -112,16 +106,11 @@ write_header(aegis_raf_ctx_internal *ctx)
 }
 
 static int
-read_and_verify_header(aegis_raf_ctx_internal *ctx)
+verify_header(aegis_raf_ctx_internal *ctx, const uint8_t hdr[AEGIS_RAF_HEADER_SIZE])
 {
-    uint8_t  hdr[AEGIS_RAF_HEADER_SIZE];
     uint16_t header_size;
     uint8_t  version;
     uint8_t  alg_id;
-
-    if (ctx->io.read_at(ctx->io.user, hdr, AEGIS_RAF_HEADER_SIZE, 0) != 0) {
-        return -1;
-    }
 
     if (memcmp(hdr, AEGIS_RAF_MAGIC, 8) != 0) {
         errno = EINVAL;
@@ -357,7 +346,7 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
     int                     file_exists;
     aegis_raf_ctx_internal *internal;
 
-    if (io == NULL || rng == NULL || cfg == NULL || master_key == NULL) {
+    if (ctx == NULL || io == NULL || rng == NULL || cfg == NULL || master_key == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -453,7 +442,7 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
     uint64_t                rec_size;
     uint8_t                 hdr[AEGIS_RAF_HEADER_SIZE];
 
-    if (io == NULL || rng == NULL || cfg == NULL || master_key == NULL) {
+    if (ctx == NULL || io == NULL || rng == NULL || cfg == NULL || master_key == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -498,7 +487,7 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
     memcpy(internal->file_id, hdr + 24, AEGIS_RAF_FILE_ID_BYTES);
     derive_keys(internal->enc_key, internal->hdr_key, master_key, internal->file_id);
 
-    if (read_and_verify_header(internal) != 0) {
+    if (verify_header(internal, hdr) != 0) {
         memset(internal, 0, sizeof(aegis_raf_ctx_internal));
         return -1;
     }
@@ -539,6 +528,11 @@ FN(read)(CTX_TYPE *ctx, uint8_t *out, size_t *bytes_read, size_t len, uint64_t o
     uint64_t                chunk_idx;
     size_t                  offset_in_chunk;
     size_t                  bytes_to_read;
+
+    if (ctx == NULL || bytes_read == NULL || (len > 0 && out == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
 
     *bytes_read = 0;
     if (len == 0 || offset >= internal->file_size) {
@@ -743,6 +737,11 @@ FN(write)(CTX_TYPE *ctx, size_t *bytes_written, const uint8_t *in, size_t len, u
 {
     aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
 
+    if (ctx == NULL || bytes_written == NULL || (len > 0 && in == NULL)) {
+        errno = EINVAL;
+        return -1;
+    }
+
     *bytes_written = 0;
     if (len == 0) {
         return 0;
@@ -763,6 +762,11 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
     uint64_t                new_backing_size;
     uint64_t                last_chunk_idx;
     size_t                  new_chunk_len;
+
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
 
     if (size == internal->file_size) {
         return 0;
@@ -821,7 +825,13 @@ int
 FN(get_size)(const CTX_TYPE *ctx, uint64_t *size)
 {
     const aegis_raf_ctx_internal *internal = (const aegis_raf_ctx_internal *) ctx;
-    *size                                  = internal->file_size;
+
+    if (ctx == NULL || size == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *size = internal->file_size;
     return 0;
 }
 
@@ -829,6 +839,12 @@ int
 FN(sync)(CTX_TYPE *ctx)
 {
     aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
     if (internal->io.sync != NULL) {
         return internal->io.sync(internal->io.user);
     }
@@ -839,6 +855,11 @@ void
 FN(close)(CTX_TYPE *ctx)
 {
     aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+
+    if (ctx == NULL) {
+        return;
+    }
+
     if (internal->io.sync != NULL) {
         (void) internal->io.sync(internal->io.user);
     }
@@ -856,8 +877,13 @@ FN(merkle_rebuild)(CTX_TYPE *ctx)
     uint64_t                chunk_end;
     int                     ret;
 
-    if (!internal->merkle_enabled) {
+    if (ctx == NULL) {
         errno = EINVAL;
+        return -1;
+    }
+
+    if (!internal->merkle_enabled) {
+        errno = ENOTSUP;
         return -1;
     }
 
@@ -915,10 +941,14 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
     size_t                  left_off;
     size_t                  right_off;
     size_t                  parent_off;
-    size_t                  root_off;
     uint8_t                 computed_hash[AEGIS_RAF_MERKLE_HASH_MAX];
     uint8_t                 empty_hash[AEGIS_RAF_MERKLE_HASH_MAX];
     int                     ret = 0;
+
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
 
     if (!internal->merkle_enabled) {
         errno = ENOTSUP;
@@ -1050,18 +1080,6 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
         }
 
         level_count = parent_count;
-    }
-
-    root_off = raf_merkle_level_offset(internal->merkle_cfg.max_chunks,
-                                       internal->merkle_cfg.hash_len, level);
-    if (memcmp(computed_hash, internal->merkle_cfg.buf + root_off, internal->merkle_cfg.hash_len) !=
-        0) {
-        if (corrupted_chunk != NULL) {
-            *corrupted_chunk = UINT64_MAX;
-        }
-        errno = EBADMSG;
-        ret   = -1;
-        goto cleanup;
     }
 
 cleanup:

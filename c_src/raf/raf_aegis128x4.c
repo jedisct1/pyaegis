@@ -5,11 +5,10 @@
 
 #include "../include/aegis128x4.h"
 
-#define VARIANT       aegis128x4
-#define KEYBYTES      aegis128x4_KEYBYTES
-#define NPUBBYTES     aegis128x4_NPUBBYTES
-#define ALG_ID        AEGIS_RAF_ALG_128X4
-#define CTX_ALIGNMENT 64
+#define VARIANT   aegis128x4
+#define KEYBYTES  aegis128x4_KEYBYTES
+#define NPUBBYTES aegis128x4_NPUBBYTES
+#define ALG_ID    AEGIS_RAF_ALG_128X4
 
 #define VARIANT_encrypt_detached aegis128x4_encrypt_detached
 #define VARIANT_decrypt_detached aegis128x4_decrypt_detached

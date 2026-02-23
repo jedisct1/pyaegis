@@ -143,6 +143,8 @@ typedef struct aegis_raf_rng {
  *              AEGIS_RAF_MERKLE_HASH_MAX.
  * max_chunks:  Maximum number of chunks (leaves) the tree can hold.
  *              Writes exceeding this limit will fail with EOVERFLOW.
+ *              Merkle initialization work is O(max_chunks), so choose a
+ *              realistic upper bound instead of an excessively large ceiling.
  *
  * Hash callbacks must return 0 on success, -1 on error.
  *
