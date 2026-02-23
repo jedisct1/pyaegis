@@ -38,9 +38,7 @@
 
 static const uint8_t AEGIS_RAF_MAGIC[8] = { 'A', 'E', 'G', 'I', 'S', 'R', 'A', 'F' };
 
-#define AEGIS_RAF_VERSION        1
-#define AEGIS_RAF_MAC_LEN        16
-#define AEGIS_RAF_RESERVED_BYTES 16
+#define AEGIS_RAF_VERSION 1
 
 typedef struct aegis_raf_ctx_internal {
     aegis_raf_io  io;
@@ -56,8 +54,8 @@ typedef struct aegis_raf_ctx_internal {
     uint8_t       file_id[AEGIS_RAF_FILE_ID_BYTES];
     uint64_t      file_size;
     uint32_t      chunk_size;
-    uint16_t      alg_id;
-    uint16_t      version;
+    uint8_t       alg_id;
+    uint8_t       version;
     size_t        keybytes;
     size_t        npubbytes;
 
@@ -126,25 +124,30 @@ load16_le(const uint8_t src[2])
     return (uint16_t) src[0] | ((uint16_t) src[1] << 8);
 }
 
+#define AAD_BYTES (AEGIS_RAF_FILE_ID_BYTES + 8 + 4)
+
 static inline void
-build_aad(uint8_t aad[44], const uint8_t file_id[32], uint64_t chunk_idx, uint32_t chunk_size)
+build_aad(uint8_t aad[AAD_BYTES], const uint8_t file_id[AEGIS_RAF_FILE_ID_BYTES],
+          uint64_t chunk_idx, uint32_t chunk_size)
 {
-    memcpy(aad, file_id, 32);
-    STORE64_LE(aad + 32, chunk_idx);
-    STORE32_LE(aad + 40, chunk_size);
+    memcpy(aad, file_id, AEGIS_RAF_FILE_ID_BYTES);
+    STORE64_LE(aad + AEGIS_RAF_FILE_ID_BYTES, chunk_idx);
+    STORE32_LE(aad + AEGIS_RAF_FILE_ID_BYTES + 8, chunk_size);
 }
 
 static inline void
 build_commitment_context(uint8_t       out[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES],
-                         uint16_t      version,
-                         uint16_t      alg_id,
+                         uint8_t       version,
+                         uint8_t       alg_id,
                          uint32_t      chunk_size,
                          const uint8_t file_id[AEGIS_RAF_FILE_ID_BYTES])
 {
-    STORE16_LE(out, version);
-    STORE16_LE(out + 2, alg_id);
-    STORE32_LE(out + 4, chunk_size);
-    memcpy(out + 8, file_id, AEGIS_RAF_FILE_ID_BYTES);
+    out[0] = version;
+    out[1] = alg_id;
+    STORE32_LE(out + 2, chunk_size);
+    memcpy(out + 6, file_id, AEGIS_RAF_FILE_ID_BYTES);
+    out[30] = 0;
+    out[31] = 0;
 }
 
 #endif

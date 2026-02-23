@@ -146,11 +146,11 @@ keccak_squeeze_once(uint8_t *out, size_t outlen, const uint64_t st[25])
 
 void
 aegis_kdf_128(uint8_t *out, size_t outlen, const uint8_t *context, size_t context_len,
-              const uint8_t *key, size_t key_len, const uint8_t file_id[32])
+              const uint8_t *key, size_t key_len, const uint8_t *file_id, size_t file_id_len)
 {
     uint64_t st[25];
     uint8_t  buf[168];
-    size_t   total = context_len + key_len + 32;
+    size_t   total = context_len + key_len + file_id_len;
 
     if (total >= 168 || outlen > 168) {
         memset(out, 0, outlen);
@@ -159,7 +159,7 @@ aegis_kdf_128(uint8_t *out, size_t outlen, const uint8_t *context, size_t contex
 
     memcpy(buf, context, context_len);
     memcpy(buf + context_len, key, key_len);
-    memcpy(buf + context_len + key_len, file_id, 32);
+    memcpy(buf + context_len + key_len, file_id, file_id_len);
 
     keccak_absorb_once(st, 168, buf, total);
     keccak_squeeze_once(out, outlen, st);
@@ -167,11 +167,11 @@ aegis_kdf_128(uint8_t *out, size_t outlen, const uint8_t *context, size_t contex
 
 void
 aegis_kdf_256(uint8_t *out, size_t outlen, const uint8_t *context, size_t context_len,
-              const uint8_t *key, size_t key_len, const uint8_t file_id[32])
+              const uint8_t *key, size_t key_len, const uint8_t *file_id, size_t file_id_len)
 {
     uint64_t st[25];
     uint8_t  buf[136];
-    size_t   total = context_len + key_len + 32;
+    size_t   total = context_len + key_len + file_id_len;
 
     if (total >= 136 || outlen > 136) {
         memset(out, 0, outlen);
@@ -180,7 +180,7 @@ aegis_kdf_256(uint8_t *out, size_t outlen, const uint8_t *context, size_t contex
 
     memcpy(buf, context, context_len);
     memcpy(buf + context_len, key, key_len);
-    memcpy(buf + context_len + key_len, file_id, 32);
+    memcpy(buf + context_len + key_len, file_id, file_id_len);
 
     keccak_absorb_once(st, 136, buf, total);
     keccak_squeeze_once(out, outlen, st);

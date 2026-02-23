@@ -29,15 +29,15 @@ extern "C" {
 #define AEGIS_RAF_CHUNK_MIN 1024
 #define AEGIS_RAF_CHUNK_MAX (1 << 20)
 
-#define AEGIS_RAF_HEADER_SIZE   92
-#define AEGIS_RAF_FILE_ID_BYTES 32
+#define AEGIS_RAF_HEADER_SIZE   64
+#define AEGIS_RAF_FILE_ID_BYTES 24
 #define AEGIS_RAF_TAG_BYTES     16
 
 #define AEGIS_RAF_SCRATCH_ALIGN            64
 #define AEGIS_RAF_ALIGN_UP(x, a)           (((x) + ((a) - 1)) & ~((size_t) (a) - 1))
 #define AEGIS_RAF_MERKLE_HASH_MIN          8
 #define AEGIS_RAF_MERKLE_HASH_MAX          64
-#define AEGIS_RAF_COMMITMENT_CONTEXT_BYTES 40
+#define AEGIS_RAF_COMMITMENT_CONTEXT_BYTES 32
 
 #define AEGIS128L_RAF_NPUBBYTES  16
 #define AEGIS128X2_RAF_NPUBBYTES 16
@@ -217,7 +217,7 @@ typedef struct aegis_raf_config {
  * file_size:  Logical plaintext file size.
  */
 typedef struct aegis_raf_info {
-    uint16_t alg_id;
+    uint8_t  alg_id;
     uint32_t chunk_size;
     uint64_t file_size;
 } aegis_raf_info;

@@ -262,8 +262,8 @@ def build_ffi():
         #define AEGIS_RAF_CHUNK_MIN 1024
         #define AEGIS_RAF_CHUNK_MAX ...
 
-        #define AEGIS_RAF_HEADER_SIZE   92
-        #define AEGIS_RAF_FILE_ID_BYTES 32
+        #define AEGIS_RAF_HEADER_SIZE   64
+        #define AEGIS_RAF_FILE_ID_BYTES 24
         #define AEGIS_RAF_TAG_BYTES     16
         #define AEGIS_RAF_MERKLE_HASH_MIN ...
         #define AEGIS_RAF_MERKLE_HASH_MAX ...
@@ -315,12 +315,12 @@ def build_ffi():
         } aegis_raf_config;
 
         typedef struct aegis_raf_info {
-            uint16_t alg_id;
+            uint8_t  alg_id;
             uint32_t chunk_size;
             uint64_t file_size;
         } aegis_raf_info;
 
-        #define AEGIS_RAF_COMMITMENT_CONTEXT_BYTES 40
+        #define AEGIS_RAF_COMMITMENT_CONTEXT_BYTES 32
 
         // RAF helper functions
         size_t aegis_raf_chunk_min(void);

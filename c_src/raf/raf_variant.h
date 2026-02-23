@@ -9,7 +9,6 @@
 #define CTX_TYPE       CONCAT3(VARIANT, _raf_, ctx)
 #define MAC_STATE_TYPE CONCAT3(VARIANT, _mac_, state)
 
-#define AAD_BYTES     44
 #define KDF_CONST     "aegis-raf-kdf-v1"
 #define KDF_CONST_LEN 16
 
@@ -21,10 +20,10 @@ derive_keys(uint8_t *enc_key, uint8_t *hdr_key, const uint8_t *master_key,
 
 #if KEYBYTES == 16
     aegis_kdf_128(key_material, sizeof key_material, (const uint8_t *) KDF_CONST, KDF_CONST_LEN,
-                  master_key, KEYBYTES, file_id);
+                  master_key, KEYBYTES, file_id, AEGIS_RAF_FILE_ID_BYTES);
 #else
     aegis_kdf_256(key_material, sizeof key_material, (const uint8_t *) KDF_CONST, KDF_CONST_LEN,
-                  master_key, KEYBYTES, file_id);
+                  master_key, KEYBYTES, file_id, AEGIS_RAF_FILE_ID_BYTES);
 #endif
 
     memcpy(enc_key, key_material, KEYBYTES);
@@ -97,14 +96,12 @@ write_header(aegis_raf_ctx_internal *ctx)
     uint8_t hdr[AEGIS_RAF_HEADER_SIZE];
 
     memcpy(hdr, AEGIS_RAF_MAGIC, 8);
-    STORE16_LE(hdr + 8, AEGIS_RAF_VERSION);
-    STORE16_LE(hdr + 10, AEGIS_RAF_HEADER_SIZE);
+    STORE16_LE(hdr + 8, AEGIS_RAF_HEADER_SIZE);
+    hdr[10] = AEGIS_RAF_VERSION;
+    hdr[11] = (uint8_t) ctx->alg_id;
     STORE32_LE(hdr + 12, ctx->chunk_size);
-    STORE16_LE(hdr + 16, AEGIS_RAF_MAC_LEN);
-    STORE16_LE(hdr + 18, ctx->alg_id);
-    STORE64_LE(hdr + 20, ctx->file_size);
-    memcpy(hdr + 28, ctx->file_id, AEGIS_RAF_FILE_ID_BYTES);
-    memset(hdr + 60, 0, AEGIS_RAF_RESERVED_BYTES);
+    STORE64_LE(hdr + 16, ctx->file_size);
+    memcpy(hdr + 24, ctx->file_id, AEGIS_RAF_FILE_ID_BYTES);
 
     if (compute_header_mac(hdr + AEGIS_RAF_HEADER_SIZE - AEGIS_RAF_TAG_BYTES, hdr, ctx->hdr_key) !=
         0) {
@@ -117,13 +114,10 @@ write_header(aegis_raf_ctx_internal *ctx)
 static int
 read_and_verify_header(aegis_raf_ctx_internal *ctx)
 {
-    uint8_t        hdr[AEGIS_RAF_HEADER_SIZE];
-    uint16_t       version;
-    uint16_t       header_size;
-    uint16_t       mac_len;
-    uint16_t       alg_id;
-    const uint8_t *reserved;
-    size_t         i;
+    uint8_t  hdr[AEGIS_RAF_HEADER_SIZE];
+    uint16_t header_size;
+    uint8_t  version;
+    uint8_t  alg_id;
 
     if (ctx->io.read_at(ctx->io.user, hdr, AEGIS_RAF_HEADER_SIZE, 0) != 0) {
         return -1;
@@ -134,14 +128,14 @@ read_and_verify_header(aegis_raf_ctx_internal *ctx)
         return -1;
     }
 
-    version = LOAD16_LE(hdr + 8);
-    if (version != AEGIS_RAF_VERSION) {
+    header_size = LOAD16_LE(hdr + 8);
+    if (header_size != AEGIS_RAF_HEADER_SIZE) {
         errno = EINVAL;
         return -1;
     }
 
-    header_size = LOAD16_LE(hdr + 10);
-    if (header_size != AEGIS_RAF_HEADER_SIZE) {
+    version = hdr[10];
+    if (version != AEGIS_RAF_VERSION) {
         errno = EINVAL;
         return -1;
     }
@@ -153,28 +147,14 @@ read_and_verify_header(aegis_raf_ctx_internal *ctx)
         return -1;
     }
 
-    mac_len = LOAD16_LE(hdr + 16);
-    if (mac_len != AEGIS_RAF_MAC_LEN) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    alg_id = LOAD16_LE(hdr + 18);
+    alg_id = hdr[11];
     if (alg_id != ALG_ID) {
         errno = EINVAL;
         return -1;
     }
 
-    ctx->file_size = LOAD64_LE(hdr + 20);
-    memcpy(ctx->file_id, hdr + 28, AEGIS_RAF_FILE_ID_BYTES);
-
-    reserved = hdr + 60;
-    for (i = 0; i < AEGIS_RAF_RESERVED_BYTES; i++) {
-        if (reserved[i] != 0) {
-            errno = EINVAL;
-            return -1;
-        }
-    }
+    ctx->file_size = LOAD64_LE(hdr + 16);
+    memcpy(ctx->file_id, hdr + 24, AEGIS_RAF_FILE_ID_BYTES);
 
     if (verify_header_mac(hdr, ctx->hdr_key) != 0) {
         return -1;
@@ -515,7 +495,7 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
-    memcpy(internal->file_id, hdr + 28, AEGIS_RAF_FILE_ID_BYTES);
+    memcpy(internal->file_id, hdr + 24, AEGIS_RAF_FILE_ID_BYTES);
     derive_keys(internal->enc_key, internal->hdr_key, master_key, internal->file_id);
 
     if (read_and_verify_header(internal) != 0) {
@@ -1117,6 +1097,5 @@ FN(merkle_commitment)(const CTX_TYPE *ctx, uint8_t *out, size_t out_len)
 #undef FN
 #undef CTX_TYPE
 #undef MAC_STATE_TYPE
-#undef AAD_BYTES
 #undef KDF_CONST
 #undef KDF_CONST_LEN
