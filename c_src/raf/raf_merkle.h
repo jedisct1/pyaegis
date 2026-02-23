@@ -1,10 +1,10 @@
 #ifndef raf_merkle_H
 #define raf_merkle_H
 
-#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../common/common.h"
 #include "../include/aegis_raf.h"
 
 /*
