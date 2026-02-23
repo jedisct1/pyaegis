@@ -69,6 +69,138 @@ class TestBytesIOStorage:
             storage.read_at(buf, 0)
             assert buf == b"test"
 
+    def test_getvalue_returns_bytes(self):
+        """getvalue() returns immutable bytes, not bytearray."""
+        storage = BytesIOStorage(b"test")
+        result = storage.getvalue()
+        assert isinstance(result, bytes)
+        assert not isinstance(result, bytearray)
+
+    def test_initial_data_is_copied(self):
+        """Mutating initial_data after construction has no effect."""
+        data = bytearray(b"hello")
+        storage = BytesIOStorage(data)
+        data[0] = 0xFF
+        assert storage.getvalue() == b"hello"
+
+    def test_read_write_at_exact_boundary(self):
+        """Write then read at the exact end of existing data."""
+        storage = BytesIOStorage(b"hello")
+        storage.write_at(b"world", 5)
+        assert storage.get_size() == 10
+        buf = bytearray(5)
+        storage.read_at(buf, 5)
+        assert buf == b"world"
+
+    def test_overwrite_same_region(self):
+        """Repeatedly overwriting the same region keeps final value."""
+        storage = BytesIOStorage(b"\x00" * 10)
+        for i in range(100):
+            storage.write_at(bytes([i % 256]), 5)
+        assert storage.get_size() == 10
+        buf = bytearray(1)
+        storage.read_at(buf, 5)
+        assert buf[0] == 99
+
+    def test_overwrite_preserves_surrounding(self):
+        """Overwriting a middle region doesn't corrupt surrounding data."""
+        storage = BytesIOStorage(b"AABBBBCC")
+        storage.write_at(b"XXXX", 2)
+        assert storage.getvalue() == b"AAXXXXCC"
+
+    def test_zero_length_read(self):
+        """Reading zero bytes succeeds even on empty storage."""
+        storage = BytesIOStorage()
+        buf = bytearray(0)
+        storage.read_at(buf, 0)
+        assert buf == b""
+
+    def test_zero_length_write(self):
+        """Writing zero bytes doesn't change size."""
+        storage = BytesIOStorage()
+        storage.write_at(b"", 0)
+        assert storage.get_size() == 0
+
+    def test_zero_length_write_at_offset(self):
+        """Writing zero bytes at an offset doesn't extend."""
+        storage = BytesIOStorage(b"hi")
+        storage.write_at(b"", 100)
+        assert storage.get_size() == 2
+
+    def test_set_size_to_zero(self):
+        """Truncating to zero clears everything."""
+        storage = BytesIOStorage(b"X" * 10000)
+        storage.set_size(0)
+        assert storage.get_size() == 0
+        assert storage.getvalue() == b""
+
+    def test_set_size_same(self):
+        """set_size to current size is a no-op."""
+        storage = BytesIOStorage(b"hello")
+        storage.set_size(5)
+        assert storage.getvalue() == b"hello"
+
+    def test_sparse_write_large_gap(self):
+        """Writing past a large gap fills with zeros."""
+        storage = BytesIOStorage()
+        storage.write_at(b"end", 10000)
+        assert storage.get_size() == 10003
+        assert storage.getvalue()[:10000] == b"\x00" * 10000
+        assert storage.getvalue()[10000:] == b"end"
+
+    def test_read_past_eof_various(self):
+        """Read past EOF at different positions."""
+        storage = BytesIOStorage(b"abc")
+        with pytest.raises(OSError):
+            storage.read_at(bytearray(1), 3)
+        with pytest.raises(OSError):
+            storage.read_at(bytearray(4), 0)
+        with pytest.raises(OSError):
+            storage.read_at(bytearray(2), 2)
+
+    def test_read_at_offset_zero_on_empty(self):
+        """Reading any bytes from empty storage raises."""
+        storage = BytesIOStorage()
+        with pytest.raises(OSError):
+            storage.read_at(bytearray(1), 0)
+
+    def test_sync_is_noop(self):
+        """sync() doesn't raise or modify data."""
+        storage = BytesIOStorage(b"data")
+        storage.sync()
+        storage.sync()
+        assert storage.getvalue() == b"data"
+
+    def test_truncate_then_extend_zeros(self):
+        """Truncate then extend fills new region with zeros, not old data."""
+        storage = BytesIOStorage(b"ABCDEFGHIJ")
+        storage.set_size(3)
+        storage.set_size(10)
+        assert storage.getvalue() == b"ABC" + b"\x00" * 7
+
+    def test_write_overlapping_existing(self):
+        """Write that partially overlaps existing data and extends."""
+        storage = BytesIOStorage(b"hello")
+        storage.write_at(b"WORLD!", 3)
+        assert storage.getvalue() == b"helWORLD!"
+        assert storage.get_size() == 9
+
+    def test_sequential_adjacent_writes(self):
+        """Adjacent writes produce contiguous data."""
+        storage = BytesIOStorage()
+        storage.write_at(b"AAA", 0)
+        storage.write_at(b"BBB", 3)
+        storage.write_at(b"CCC", 6)
+        assert storage.getvalue() == b"AAABBBCCC"
+
+    def test_get_size_empty(self):
+        """Empty storage has size 0."""
+        assert BytesIOStorage().get_size() == 0
+
+    def test_get_size_with_initial_data(self):
+        """Size matches initial data length."""
+        assert BytesIOStorage(b"hello").get_size() == 5
+
 
 class TestFileStorage:
     """Tests for FileStorage backend."""

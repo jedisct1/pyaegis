@@ -236,6 +236,8 @@ class BytesIOStorage:
 
     def write_at(self, data: bytes, offset: int) -> None:
         """Write exactly len(data) bytes at offset."""
+        if not data:
+            return
         end = offset + len(data)
         if end > len(self._data):
             self._data.extend(b"\x00" * (end - len(self._data)))
