@@ -217,9 +217,9 @@ typedef struct aegis_raf_config {
  * file_size:  Logical plaintext file size.
  */
 typedef struct aegis_raf_info {
-    uint8_t  alg_id;
-    uint32_t chunk_size;
     uint64_t file_size;
+    uint32_t chunk_size;
+    uint8_t  alg_id;
 } aegis_raf_info;
 
 /* Returns minimum allowed chunk size (AEGIS_RAF_CHUNK_MIN). */

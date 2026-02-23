@@ -41,26 +41,25 @@ static const uint8_t AEGIS_RAF_MAGIC[8] = { 'A', 'E', 'G', 'I', 'S', 'R', 'A', '
 #define AEGIS_RAF_VERSION 1
 
 typedef struct aegis_raf_ctx_internal {
-    aegis_raf_io  io;
-    aegis_raf_rng rng;
-    uint8_t      *scratch_buf;
-    size_t        scratch_len;
-    uint8_t      *record_buf;
-    uint8_t      *chunk_buf;
-    size_t        record_buf_size;
-    size_t        chunk_buf_size;
-    uint8_t       enc_key[32];
-    uint8_t       hdr_key[32];
-    uint8_t       file_id[AEGIS_RAF_FILE_ID_BYTES];
-    uint64_t      file_size;
-    uint32_t      chunk_size;
-    uint8_t       alg_id;
-    uint8_t       version;
-    size_t        keybytes;
-    size_t        npubbytes;
-
+    aegis_raf_io            io;
+    aegis_raf_rng           rng;
+    uint8_t                *scratch_buf;
+    size_t                  scratch_len;
+    uint8_t                *record_buf;
+    uint8_t                *chunk_buf;
+    size_t                  record_buf_size;
+    size_t                  chunk_buf_size;
+    size_t                  keybytes;
+    size_t                  npubbytes;
     aegis_raf_merkle_config merkle_cfg;
+    uint64_t                file_size;
+    uint8_t                 enc_key[32];
+    uint8_t                 hdr_key[32];
+    uint8_t                 file_id[AEGIS_RAF_FILE_ID_BYTES];
+    uint32_t                chunk_size;
     int                     merkle_enabled;
+    uint8_t                 alg_id;
+    uint8_t                 version;
 } aegis_raf_ctx_internal;
 
 #define LOAD64_LE(SRC) load64_le(SRC)
