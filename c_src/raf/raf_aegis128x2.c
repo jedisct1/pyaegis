@@ -11,7 +11,6 @@
 #define ALG_ID        AEGIS_RAF_ALG_128X2
 #define CTX_ALIGNMENT 32
 
-#define VARIANT_stream           aegis128x2_stream
 #define VARIANT_encrypt_detached aegis128x2_encrypt_detached
 #define VARIANT_decrypt_detached aegis128x2_decrypt_detached
 #define VARIANT_mac_init         aegis128x2_mac_init

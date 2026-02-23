@@ -11,7 +11,6 @@
 #define ALG_ID        AEGIS_RAF_ALG_256
 #define CTX_ALIGNMENT 16
 
-#define VARIANT_stream           aegis256_stream
 #define VARIANT_encrypt_detached aegis256_encrypt_detached
 #define VARIANT_decrypt_detached aegis256_decrypt_detached
 #define VARIANT_mac_init         aegis256_mac_init

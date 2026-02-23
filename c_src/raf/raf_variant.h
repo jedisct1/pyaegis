@@ -1,3 +1,5 @@
+#include "../common/keccak.h"
+
 #define CONCAT_(a, b)     a##b
 #define CONCAT(a, b)      CONCAT_(a, b)
 #define CONCAT3_(a, b, c) a##b##c
@@ -15,22 +17,19 @@ static void
 derive_keys(uint8_t *enc_key, uint8_t *hdr_key, const uint8_t *master_key,
             const uint8_t file_id[AEGIS_RAF_FILE_ID_BYTES])
 {
-    uint8_t kdf_nonce[NPUBBYTES];
     uint8_t key_material[KEYBYTES * 2];
-    size_t  i;
 
-    memcpy(kdf_nonce, file_id, NPUBBYTES);
-    for (i = 0; i < KDF_CONST_LEN && i < NPUBBYTES; i++) {
-        kdf_nonce[i] ^= (uint8_t) KDF_CONST[i];
-    }
-
-    VARIANT_stream(key_material, sizeof key_material, kdf_nonce, master_key);
+#if KEYBYTES == 16
+    aegis_kdf_128(key_material, sizeof key_material, (const uint8_t *) KDF_CONST, KDF_CONST_LEN,
+                  master_key, KEYBYTES, file_id);
+#else
+    aegis_kdf_256(key_material, sizeof key_material, (const uint8_t *) KDF_CONST, KDF_CONST_LEN,
+                  master_key, KEYBYTES, file_id);
+#endif
 
     memcpy(enc_key, key_material, KEYBYTES);
     memcpy(hdr_key, key_material + KEYBYTES, KEYBYTES);
-
     memset(key_material, 0, sizeof key_material);
-    memset(kdf_nonce, 0, sizeof kdf_nonce);
 }
 
 static int
@@ -523,10 +522,9 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         memset(internal, 0, sizeof(aegis_raf_ctx_internal));
         return -1;
     }
-    rec_size = (uint64_t) record_size(internal->chunk_size);
+    rec_size   = (uint64_t) record_size(internal->chunk_size);
     max_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
-    if (max_chunks != 0 &&
-        max_chunks > (UINT64_MAX - AEGIS_RAF_HEADER_SIZE) / rec_size) {
+    if (max_chunks != 0 && max_chunks > (UINT64_MAX - AEGIS_RAF_HEADER_SIZE) / rec_size) {
         errno = EOVERFLOW;
         memset(internal, 0, sizeof(aegis_raf_ctx_internal));
         return -1;
@@ -684,9 +682,8 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
                 memset(internal->chunk_buf + zero_start, 0, zero_end - zero_start);
             }
 
-            chunk_valid_len = (chunk_end <= new_file_size)
-                                  ? internal->chunk_size
-                                  : (size_t) (new_file_size - chunk_start);
+            chunk_valid_len = (chunk_end <= new_file_size) ? internal->chunk_size
+                                                           : (size_t) (new_file_size - chunk_start);
 
             if (write_chunk(internal, chunk_valid_len, ci) != 0) {
                 return -1;
@@ -998,7 +995,7 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
                 *corrupted_chunk = ci;
             }
             errno = EBADMSG;
-            ret = -1;
+            ret   = -1;
             goto cleanup;
         }
     }
@@ -1033,18 +1030,17 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
             uint64_t left_child  = i * 2;
             uint64_t right_child = left_child + 1;
 
-            left_off =
-                raf_merkle_node_offset(internal->merkle_cfg.max_chunks, internal->merkle_cfg.hash_len,
-                                       level, left_child);
+            left_off = raf_merkle_node_offset(internal->merkle_cfg.max_chunks,
+                                              internal->merkle_cfg.hash_len, level, left_child);
 
             if (right_child < level_count) {
-                right_off = raf_merkle_node_offset(internal->merkle_cfg.max_chunks,
-                                                   internal->merkle_cfg.hash_len, level,
-                                                   right_child);
+                right_off =
+                    raf_merkle_node_offset(internal->merkle_cfg.max_chunks,
+                                           internal->merkle_cfg.hash_len, level, right_child);
                 ret = internal->merkle_cfg.hash_parent(
                     internal->merkle_cfg.user, computed_hash, internal->merkle_cfg.hash_len,
-                    internal->merkle_cfg.buf + left_off, internal->merkle_cfg.buf + right_off, level,
-                    i);
+                    internal->merkle_cfg.buf + left_off, internal->merkle_cfg.buf + right_off,
+                    level, i);
             } else {
                 ret = internal->merkle_cfg.hash_empty(internal->merkle_cfg.user, empty_hash,
                                                       internal->merkle_cfg.hash_len, level,
@@ -1060,9 +1056,8 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
                 goto cleanup;
             }
 
-            parent_off =
-                raf_merkle_node_offset(internal->merkle_cfg.max_chunks, internal->merkle_cfg.hash_len,
-                                       level + 1, i);
+            parent_off = raf_merkle_node_offset(internal->merkle_cfg.max_chunks,
+                                                internal->merkle_cfg.hash_len, level + 1, i);
             if (memcmp(computed_hash, internal->merkle_cfg.buf + parent_off,
                        internal->merkle_cfg.hash_len) != 0) {
                 if (corrupted_chunk != NULL) {
@@ -1077,10 +1072,10 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
         level_count = parent_count;
     }
 
-    root_off = raf_merkle_level_offset(
-        internal->merkle_cfg.max_chunks, internal->merkle_cfg.hash_len, level);
-    if (memcmp(computed_hash, internal->merkle_cfg.buf + root_off,
-               internal->merkle_cfg.hash_len) != 0) {
+    root_off = raf_merkle_level_offset(internal->merkle_cfg.max_chunks,
+                                       internal->merkle_cfg.hash_len, level);
+    if (memcmp(computed_hash, internal->merkle_cfg.buf + root_off, internal->merkle_cfg.hash_len) !=
+        0) {
         if (corrupted_chunk != NULL) {
             *corrupted_chunk = UINT64_MAX;
         }
@@ -1097,7 +1092,7 @@ int
 FN(merkle_commitment)(const CTX_TYPE *ctx, uint8_t *out, size_t out_len)
 {
     const aegis_raf_ctx_internal *internal = (const aegis_raf_ctx_internal *) ctx;
-    uint8_t commit_ctx[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES];
+    uint8_t                       commit_ctx[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES];
 
     if (ctx == NULL) {
         errno = EINVAL;
@@ -1108,13 +1103,11 @@ FN(merkle_commitment)(const CTX_TYPE *ctx, uint8_t *out, size_t out_len)
         return -1;
     }
 
-    build_commitment_context(commit_ctx, internal->version,
-                             internal->alg_id, internal->chunk_size,
+    build_commitment_context(commit_ctx, internal->version, internal->alg_id, internal->chunk_size,
                              internal->file_id);
 
-    return aegis_raf_merkle_root(&internal->merkle_cfg, out, out_len,
-                                commit_ctx, sizeof commit_ctx,
-                                internal->file_size);
+    return aegis_raf_merkle_root(&internal->merkle_cfg, out, out_len, commit_ctx, sizeof commit_ctx,
+                                 internal->file_size);
 }
 
 #undef CONCAT_

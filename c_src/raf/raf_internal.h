@@ -135,10 +135,10 @@ build_aad(uint8_t aad[44], const uint8_t file_id[32], uint64_t chunk_idx, uint32
 }
 
 static inline void
-build_commitment_context(uint8_t out[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES],
-                         uint16_t version,
-                         uint16_t alg_id,
-                         uint32_t chunk_size,
+build_commitment_context(uint8_t       out[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES],
+                         uint16_t      version,
+                         uint16_t      alg_id,
+                         uint32_t      chunk_size,
                          const uint8_t file_id[AEGIS_RAF_FILE_ID_BYTES])
 {
     STORE16_LE(out, version);
