@@ -48,3 +48,6 @@ build/*.c
 # OS
 .DS_Store
 Thumbs.db
+
+# Swival
+.swival
