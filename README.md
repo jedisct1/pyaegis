@@ -32,7 +32,7 @@ Python bindings for libaegis - high-performance AEGIS authenticated encryption.
     - [Random Access Operations](#random-access-operations)
     - [Auto-detecting Algorithm](#auto-detecting-algorithm)
     - [Available RAF Classes](#available-raf-classes)
-    - [Merkle Tree Integrity Verification](#merkle-tree-integrity-verification)
+    - [Merkle Tree Commitment](#merkle-tree-commitment)
     - [Storage Backends](#storage-backends)
   - [Error Handling](#error-handling)
   - [Performance](#performance)
@@ -469,7 +469,7 @@ from pyaegis import SHA256MerkleHasher
 hasher = SHA256MerkleHasher()
 
 # Or implement your own: any object with hash_len, hash_leaf(),
-# hash_parent(), and hash_empty() methods works.
+# hash_parent(), hash_empty(), and hash_commitment() methods works.
 
 with AegisRaf128L(storage, key, create=True, merkle=hasher) as f:
     ...
