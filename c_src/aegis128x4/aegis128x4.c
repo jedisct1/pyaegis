@@ -145,6 +145,13 @@ aegis128x4_stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_t *
 }
 
 void
+aegis128x4_stream_xor(uint8_t *out, const uint8_t *in, size_t len, const uint8_t *npub,
+                      const uint8_t *k)
+{
+    implementation->stream_xor(out, in, len, npub, k);
+}
+
+void
 aegis128x4_encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen, const uint8_t *npub,
                                    const uint8_t *k)
 {

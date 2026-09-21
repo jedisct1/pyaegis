@@ -1,5 +1,17 @@
+#ifndef AEGIS_ENCRYPT_BULK
+#    define AEGIS_ENCRYPT_BULK(dst, src, len, state)    0
+#    define AEGIS_DECRYPT_BULK(dst, src, len, state)    0
+#    define AEGIS_ABSORB_BULK(dst, src, len, state)     0
+#    define AEGIS_STREAM_BULK(dst, src, len, state)     0
+#    define AEGIS_STREAM_XOR_BULK(dst, src, len, state) 0
+#endif
+
 #define RATE      16
 #define ALIGNMENT 16
+
+#ifndef AES_BLOCK_ENC_BARRIER
+#    define AES_BLOCK_ENC_BARRIER() (void) 0
+#endif
 
 typedef aes_block_t aegis_blocks[6];
 
@@ -106,8 +118,30 @@ aegis256_enc(uint8_t *const dst, const uint8_t *const src, aes_block_t *const st
     tmp = AES_BLOCK_XOR(tmp, state[1]);
     tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_AND(state[2], state[3]));
     AES_BLOCK_STORE(dst, tmp);
+    AES_BLOCK_ENC_BARRIER();
 
     aegis256_update(state, msg);
+}
+
+static inline void
+aegis256_xor_keystream(uint8_t *const dst, const uint8_t *const src, aes_block_t *const state)
+{
+    static CRYPTO_ALIGN(AES_BLOCK_LENGTH) const uint8_t zero_[AES_BLOCK_LENGTH] = { 0 };
+
+    const aes_block_t zero = AES_BLOCK_LOAD(zero_);
+    aes_block_t       msg;
+    aes_block_t       tmp;
+
+    msg = AES_BLOCK_LOAD(src);
+    tmp = AES_BLOCK_XOR(msg, state[5]);
+    tmp = AES_BLOCK_XOR(tmp, state[4]);
+    tmp = AES_BLOCK_XOR(tmp, state[1]);
+    tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_AND(state[2], state[3]));
+    AES_BLOCK_STORE(dst, tmp);
+    AES_BLOCK_ENC_BARRIER();
+
+    /* Don't absorb the input, so that the keystream stays the same as the one from stream(). */
+    aegis256_update(state, zero);
 }
 
 static inline void
@@ -160,7 +194,7 @@ encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size
 
     aegis256_init(k, npub, state);
 
-    for (i = 0; i + RATE <= adlen; i += RATE) {
+    for (i = AEGIS_ABSORB_BULK(NULL, ad, adlen, state); i + RATE <= adlen; i += RATE) {
         aegis256_absorb(ad + i, state);
     }
     if (adlen % RATE) {
@@ -168,7 +202,7 @@ encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size
         memcpy(src, ad + i, adlen % RATE);
         aegis256_absorb(src, state);
     }
-    for (i = 0; i + RATE <= mlen; i += RATE) {
+    for (i = AEGIS_ENCRYPT_BULK(c, m, mlen, state); i + RATE <= mlen; i += RATE) {
         aegis256_enc(c + i, m + i, state);
     }
     if (mlen % RATE) {
@@ -197,7 +231,7 @@ decrypt_detached(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t *mac, 
 
     aegis256_init(k, npub, state);
 
-    for (i = 0; i + RATE <= adlen; i += RATE) {
+    for (i = AEGIS_ABSORB_BULK(NULL, ad, adlen, state); i + RATE <= adlen; i += RATE) {
         aegis256_absorb(ad + i, state);
     }
     if (adlen % RATE) {
@@ -206,7 +240,7 @@ decrypt_detached(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t *mac, 
         aegis256_absorb(src, state);
     }
     if (m != NULL) {
-        for (i = 0; i + RATE <= mlen; i += RATE) {
+        for (i = AEGIS_DECRYPT_BULK(m, c, mlen, state); i + RATE <= mlen; i += RATE) {
             aegis256_dec(m + i, c + i, state);
         }
     } else {
@@ -242,20 +276,43 @@ stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_t *k)
     aegis_blocks                    state;
     CRYPTO_ALIGN(ALIGNMENT) uint8_t src[RATE];
     CRYPTO_ALIGN(ALIGNMENT) uint8_t dst[RATE];
+    CRYPTO_ALIGN(ALIGNMENT) uint8_t zero_nonce[aegis256_NPUBBYTES];
     size_t                          i;
 
     memset(src, 0, sizeof src);
     if (npub == NULL) {
-        npub = src;
+        memset(zero_nonce, 0, sizeof zero_nonce);
+        npub = zero_nonce;
     }
 
     aegis256_init(k, npub, state);
 
-    for (i = 0; i + RATE <= len; i += RATE) {
+    for (i = AEGIS_STREAM_BULK(out, src, len, state); i + RATE <= len; i += RATE) {
         aegis256_enc(out + i, src, state);
     }
     if (len % RATE) {
         aegis256_enc(dst, src, state);
+        memcpy(out + i, dst, len % RATE);
+    }
+}
+
+static void
+stream_xor(uint8_t *out, const uint8_t *in, size_t len, const uint8_t *npub, const uint8_t *k)
+{
+    aegis_blocks                    state;
+    CRYPTO_ALIGN(ALIGNMENT) uint8_t src[RATE];
+    CRYPTO_ALIGN(ALIGNMENT) uint8_t dst[RATE];
+    size_t                          i;
+
+    aegis256_init(k, npub, state);
+
+    for (i = AEGIS_STREAM_XOR_BULK(out, in, len, state); i + RATE <= len; i += RATE) {
+        aegis256_xor_keystream(out + i, in + i, state);
+    }
+    if (len % RATE) {
+        memset(src, 0, RATE);
+        memcpy(src, in + i, len % RATE);
+        aegis256_xor_keystream(dst, src, state);
         memcpy(out + i, dst, len % RATE);
     }
 }
@@ -271,7 +328,7 @@ encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen, const uint8_t
 
     aegis256_init(k, npub, state);
 
-    for (i = 0; i + RATE <= mlen; i += RATE) {
+    for (i = AEGIS_ENCRYPT_BULK(c, m, mlen, state); i + RATE <= mlen; i += RATE) {
         aegis256_enc(c + i, m + i, state);
     }
     if (mlen % RATE) {
@@ -292,7 +349,7 @@ decrypt_unauthenticated(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t
 
     aegis256_init(k, npub, state);
 
-    for (i = 0; i + RATE <= mlen; i += RATE) {
+    for (i = AEGIS_DECRYPT_BULK(m, c, mlen, state); i + RATE <= mlen; i += RATE) {
         aegis256_dec(m + i, c + i, state);
     }
     if (mlen % RATE) {
@@ -331,7 +388,7 @@ state_init(aegis256_state *st_, const uint8_t *ad, size_t adlen, const uint8_t *
     st->pos  = 0;
 
     aegis256_init(k, npub, blocks);
-    for (i = 0; i + RATE <= adlen; i += RATE) {
+    for (i = AEGIS_ABSORB_BULK(NULL, ad, adlen, blocks); i + RATE <= adlen; i += RATE) {
         aegis256_absorb(ad + i, blocks);
     }
     if (adlen % RATE) {
@@ -388,7 +445,7 @@ state_encrypt_update(aegis256_state *st_, uint8_t *c, const uint8_t *m, size_t m
         st->pos = 0;
     }
 
-    for (i = 0; i + RATE <= mlen; i += RATE) {
+    for (i = AEGIS_ENCRYPT_BULK(c, m, mlen, blocks); i + RATE <= mlen; i += RATE) {
         aegis256_enc(c + i, m + i, blocks);
     }
 
@@ -486,7 +543,7 @@ state_decrypt_update(aegis256_state *st_, uint8_t *m, const uint8_t *c, size_t c
     }
 
     if (m != NULL) {
-        for (i = 0; i + RATE <= clen; i += RATE) {
+        for (i = AEGIS_DECRYPT_BULK(m, c, clen, blocks); i + RATE <= clen; i += RATE) {
             aegis256_dec(m + i, c + i, blocks);
         }
     } else {
@@ -603,7 +660,7 @@ state_mac_update(aegis256_mac_state *st_, const uint8_t *ad, size_t adlen)
         ad += RATE - left;
         adlen -= RATE - left;
     }
-    for (i = 0; i + RATE * 2 <= adlen; i += RATE * 2) {
+    for (i = AEGIS_ABSORB_BULK(NULL, ad, adlen, blocks); i + RATE * 2 <= adlen; i += RATE * 2) {
         aes_block_t msg0, msg1;
 
         msg0 = AES_BLOCK_LOAD(ad + i + AES_BLOCK_LENGTH * 0);

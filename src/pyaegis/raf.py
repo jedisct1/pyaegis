@@ -411,6 +411,48 @@ def _hash_commitment_callback(user, out, out_len, structural_root, ctx, ctx_len,
         return -1
 
 
+def raf_derive_master_key(master_key: bytes, context: bytes = b"") -> bytes:
+    """Derive a context-bound key for RAF encryption.
+
+    Args:
+        master_key: A 16-byte or 32-byte application master key.
+        context: A public identifier for a file or file family.
+
+    Returns:
+        A RAF-scoped key with the same length as ``master_key``.
+
+    Raises:
+        TypeError: If either argument is not bytes.
+        ValueError: If the key or context length is invalid.
+        RAFConfigError: If the native KDF rejects validated inputs.
+    """
+    if not isinstance(master_key, bytes):
+        raise TypeError("master_key must be bytes")
+    if not isinstance(context, bytes):
+        raise TypeError("context must be bytes")
+
+    key_size = len(master_key)
+    if key_size not in (16, 32):
+        raise ValueError(f"master_key must be 16 or 32 bytes, got {key_size}")
+
+    max_context_size = 120 if key_size == 16 else 72
+    if len(context) > max_context_size:
+        raise ValueError(
+            f"context must be at most {max_context_size} bytes for a {key_size}-byte key"
+        )
+
+    out = ffi.new(f"uint8_t[{key_size}]")
+    try:
+        result = lib.aegis_raf_derive_master_key(
+            out, key_size, master_key, key_size, context, len(context)
+        )
+        if result != 0:
+            raise RAFConfigError("Failed to derive RAF master key")
+        return bytes(ffi.buffer(out, key_size))
+    finally:
+        ffi.buffer(out, key_size)[:] = b"\x00" * key_size
+
+
 def raf_probe(storage: RAFStorage) -> tuple[int, int, int]:
     """Probe an encrypted file to determine its parameters.
 

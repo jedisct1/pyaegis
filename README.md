@@ -28,6 +28,7 @@ Python bindings for libaegis - high-performance AEGIS authenticated encryption.
     - [Message Authentication Code (MAC)](#message-authentication-code-mac)
   - [Random Access Files (RAF)](#random-access-files-raf)
     - [Basic Usage](#basic-usage)
+    - [Context-bound Keys](#context-bound-keys)
     - [File-based Storage](#file-based-storage)
     - [Random Access Operations](#random-access-operations)
     - [Auto-detecting Algorithm](#auto-detecting-algorithm)
@@ -349,6 +350,32 @@ with AegisRaf128L(storage, key, create=True) as f:
 with AegisRaf128L(storage, key) as f:
     print(f.read())  # b'Hello, World! More data.'
 ```
+
+### Context-bound Keys
+
+Applications can derive separate RAF keys for different files or file families from one application master key.
+The context identifies the file family and does not need to be secret.
+
+```python
+from pyaegis import AegisRaf128L, BytesIOStorage, raf_derive_master_key
+
+app_master_key = AegisRaf128L.random_key()
+context = b"customer-42/archive"
+raf_key = raf_derive_master_key(app_master_key, context)
+
+storage = BytesIOStorage()
+with AegisRaf128L(storage, raf_key, create=True) as f:
+    f.write(b"Secret data")
+
+# Derive the same key with the same context when reopening the file.
+raf_key = raf_derive_master_key(app_master_key, context)
+with AegisRaf128L(storage, raf_key) as f:
+    print(f.read())
+```
+
+Different contexts produce different keys.
+An empty context is valid and still produces a RAF-specific key.
+Contexts can contain up to 120 bytes with a 16-byte master key or 72 bytes with a 32-byte master key.
 
 ### File-based Storage
 

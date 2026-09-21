@@ -295,6 +295,32 @@ int    aegis256x4_raf_scratch_validate(const aegis_raf_scratch *scratch, uint32_
 size_t aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg);
 
 /*
+ * Derive a context-bound RAF master key from an application master key.
+ *
+ * Produces a deterministic RAF-scoped subkey by combining the application
+ * master key with a caller-supplied context string. The derived key can
+ * then be passed to any *_raf_create() or *_raf_open() API.
+ *
+ * Using different contexts with the same master key produces different
+ * RAF subkeys, so different RAF files or file families can be isolated
+ * without requiring separate master keys.
+ *
+ * out_len and master_key_len must both be 16 (for 128-bit variants) or
+ * 32 (for 256-bit variants), and must match each other. context may be
+ * NULL if context_len is 0; an empty context still derives a RAF-scoped
+ * subkey (it does not copy the master key through unchanged).
+ *
+ * context_len must not exceed 120 bytes for 128-bit keys or 72 bytes
+ * for 256-bit keys (limited by the internal KDF block size).
+ *
+ * The caller is responsible for zeroizing the derived key buffer after use.
+ *
+ * Returns 0 on success, -1 on error with errno set to EINVAL.
+ */
+int aegis_raf_derive_master_key(uint8_t *out, size_t out_len, const uint8_t *master_key,
+                                size_t master_key_len, const uint8_t *context, size_t context_len);
+
+/*
  * Random-Access Encrypted File API
  *
  * Provides pread/pwrite-style access to encrypted files. Files are divided
@@ -306,11 +332,22 @@ size_t aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg);
  *   - AEGIS-256, AEGIS-256X2, AEGIS-256X4:  32 bytes
  *
  * All functions return 0 on success and -1 on error with errno set.
+ *
+ * If a write, truncate, or Merkle rebuild fails after it starts changing
+ * stored data, the context becomes unusable: every later call returns -1
+ * with errno=EIO until you close and reopen it. Other errors, including a
+ * sync failure, leave the context usable. Truncating to the current size
+ * is a no-op.
+ *
+ * Reopening clears the Merkle tree; rebuild it before use. A write that
+ * fails partway through the header can leave the file unreadable.
  */
 
-/* Opaque context for AEGIS-128L RAF operations. */
+/*
+ * Opaque context for AEGIS-128L RAF operations.
+ */
 typedef struct aegis128l_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis128l_raf_ctx;
 
 /*
@@ -333,6 +370,9 @@ int aegis128l_raf_create(aegis128l_raf_ctx *ctx, const aegis_raf_io *io, const a
  * if the header is invalid or the MAC verification fails.
  *
  * The scratch buffer must be sized for the file's chunk_size (from probe).
+ * The logical size comes from the authenticated header, not the backing
+ * file's length, so extra bytes left by an interrupted operation are
+ * ignored.
  */
 int aegis128l_raf_open(aegis128l_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
                        const aegis_raf_config *cfg, const uint8_t *master_key);
@@ -410,7 +450,7 @@ int aegis128l_raf_merkle_commitment(const aegis128l_raf_ctx *ctx, uint8_t *out, 
 
 /* Opaque context for AEGIS-128X2 RAF operations. See aegis128l_raf_* for API docs. */
 typedef struct aegis128x2_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis128x2_raf_ctx;
 
 int aegis128x2_raf_create(aegis128x2_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -443,7 +483,7 @@ int aegis128x2_raf_merkle_commitment(const aegis128x2_raf_ctx *ctx, uint8_t *out
 
 /* Opaque context for AEGIS-128X4 RAF operations. See aegis128l_raf_* for API docs. */
 typedef struct aegis128x4_raf_ctx {
-    CRYPTO_ALIGN(64) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis128x4_raf_ctx;
 
 int aegis128x4_raf_create(aegis128x4_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -476,7 +516,7 @@ int aegis128x4_raf_merkle_commitment(const aegis128x4_raf_ctx *ctx, uint8_t *out
 
 /* Opaque context for AEGIS-256 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256_raf_ctx {
-    CRYPTO_ALIGN(16) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis256_raf_ctx;
 
 int aegis256_raf_create(aegis256_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -509,7 +549,7 @@ int aegis256_raf_merkle_commitment(const aegis256_raf_ctx *ctx, uint8_t *out, si
 
 /* Opaque context for AEGIS-256X2 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256x2_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis256x2_raf_ctx;
 
 int aegis256x2_raf_create(aegis256x2_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -542,7 +582,7 @@ int aegis256x2_raf_merkle_commitment(const aegis256x2_raf_ctx *ctx, uint8_t *out
 
 /* Opaque context for AEGIS-256X4 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256x4_raf_ctx {
-    CRYPTO_ALIGN(64) uint8_t opaque[512];
+    uint8_t opaque[512];
 } aegis256x4_raf_ctx;
 
 int aegis256x4_raf_create(aegis256x4_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,

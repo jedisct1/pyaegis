@@ -5,21 +5,25 @@
 
 #    include "../common/common.h"
 #    include "aegis256x4.h"
-#    include "aegis256x4_avx2.h"
+#    include "aegis256x4_avx512vl.h"
 
 #    ifdef HAVE_VAESINTRIN_H
 
 #        ifdef __clang__
-#            pragma clang attribute push(__attribute__((target("aes,vaes,avx2"))), \
+#            pragma clang attribute push(__attribute__((target("aes,vaes,avx512f,avx512vl"))), \
                                          apply_to = function)
 #        elif defined(__GNUC__)
-#            pragma GCC target("aes,vaes,avx2")
+#            pragma GCC target("aes,vaes,avx512f,avx512vl")
 #        endif
 
 #        include <immintrin.h>
 
 #        define AES_BLOCK_LENGTH 64
 
+/* Some CPUs run 512-bit AVX-512 instructions as two 256-bit passes internally.
+ * Splitting the state into real 256-bit halves gives those CPUs twice as many independent chains to
+ * work with, and AVX-512VL still gets us the extra registers and ternary-logic instructions
+ * full-width AVX-512 would have. */
 typedef struct {
     __m256i b0;
     __m256i b1;
@@ -29,6 +33,13 @@ static inline aes_block_t
 AES_BLOCK_XOR(const aes_block_t a, const aes_block_t b)
 {
     return (aes_block_t) { _mm256_xor_si256(a.b0, b.b0), _mm256_xor_si256(a.b1, b.b1) };
+}
+
+static inline aes_block_t
+AES_BLOCK_XOR3(const aes_block_t a, const aes_block_t b, const aes_block_t c)
+{
+    return (aes_block_t) { _mm256_ternarylogic_epi64(a.b0, b.b0, c.b0, 0x96),
+                           _mm256_ternarylogic_epi64(a.b1, b.b1, c.b1, 0x96) };
 }
 
 static inline aes_block_t
@@ -51,6 +62,16 @@ AES_BLOCK_LOAD_64x2(uint64_t a, uint64_t b)
     return (aes_block_t) { t, t };
 }
 
+static inline aes_block_t
+aes_block_broadcast128(const uint8_t *a)
+{
+    const __m256i t =
+        _mm256_broadcastsi128_si256(_mm_loadu_si128((const __m128i *) (const void *) a));
+    return (aes_block_t) { t, t };
+}
+
+#        define AES_BLOCK_BROADCAST128(A) aes_block_broadcast128(A)
+
 static inline void
 AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 {
@@ -64,6 +85,13 @@ AES_ENC(const aes_block_t a, const aes_block_t b)
     return (aes_block_t) { _mm256_aesenc_epi128(a.b0, b.b0), _mm256_aesenc_epi128(a.b1, b.b1) };
 }
 
+static inline aes_block_t
+AES_ENC0(const aes_block_t a)
+{
+    return (aes_block_t) { _mm256_aesenc_epi128(a.b0, _mm256_setzero_si256()),
+                           _mm256_aesenc_epi128(a.b1, _mm256_setzero_si256()) };
+}
+
 static inline void
 aegis256x4_update(aes_block_t *const state, const aes_block_t d)
 {
@@ -75,12 +103,30 @@ aegis256x4_update(aes_block_t *const state, const aes_block_t d)
     state[3] = AES_ENC(state[2], state[3]);
     state[2] = AES_ENC(state[1], state[2]);
     state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
+    /* AESENC(x, k) is the same as AESENC(x, 0) XORed with k.
+     * That lets this round start without waiting on the earlier XOR, and folds the two XORs into
+     * one instruction. */
+    state[0] = AES_BLOCK_XOR3(AES_ENC0(tmp), state[0], d);
+}
+
+#        define AEGIS256X4_UPDATE_NODATA_DEFINED
+static inline void
+aegis256x4_update_nodata(aes_block_t *const state)
+{
+    aes_block_t tmp;
+
+    tmp      = state[5];
+    state[5] = AES_ENC(state[4], state[5]);
+    state[4] = AES_ENC(state[3], state[4]);
+    state[3] = AES_ENC(state[2], state[3]);
+    state[2] = AES_ENC(state[1], state[2]);
+    state[1] = AES_ENC(state[0], state[1]);
+    state[0] = AES_ENC(tmp, state[0]);
 }
 
 #        include "aegis256x4_common.h"
 
-struct aegis256x4_implementation aegis256x4_avx2_implementation = {
+struct aegis256x4_implementation aegis256x4_avx512vl_implementation = {
     .encrypt_detached        = encrypt_detached,
     .decrypt_detached        = decrypt_detached,
     .encrypt_unauthenticated = encrypt_unauthenticated,

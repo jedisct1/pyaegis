@@ -329,6 +329,9 @@ def build_ffi():
         size_t aegis_raf_scratch_align(void);
         int aegis_raf_probe(const aegis_raf_io *io, aegis_raf_info *info);
         size_t aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg);
+        int aegis_raf_derive_master_key(uint8_t *out, size_t out_len,
+                                        const uint8_t *master_key, size_t master_key_len,
+                                        const uint8_t *context, size_t context_len);
 
         // AEGIS-128L RAF
         typedef struct { uint8_t opaque[512]; ...; } aegis128l_raf_ctx;

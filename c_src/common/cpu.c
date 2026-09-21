@@ -28,6 +28,8 @@ typedef struct CPUFeatures_ {
     int has_avx;
     int has_avx2;
     int has_avx512f;
+    int has_avx512vl;
+    int has_narrow_avx512;
     int has_aesni;
     int has_vaes;
     int has_altivec;
@@ -35,8 +37,9 @@ typedef struct CPUFeatures_ {
 
 static CPUFeatures _cpu_features;
 
-#define CPUID_EBX_AVX2    0x00000020
-#define CPUID_EBX_AVX512F 0x00010000
+#define CPUID_EBX_AVX2     0x00000020
+#define CPUID_EBX_AVX512F  0x00010000
+#define CPUID_EBX_AVX512VL 0x80000000
 
 #define CPUID_ECX_AESNI   0x02000000
 #define CPUID_ECX_XSAVE   0x04000000
@@ -273,7 +276,9 @@ _runtime_intel_cpu_features(CPUFeatures *const cpu_features)
     }
 #endif
 
-    cpu_features->has_avx512f = 0;
+    cpu_features->has_avx512f       = 0;
+    cpu_features->has_avx512vl      = 0;
+    cpu_features->has_narrow_avx512 = 0;
 #ifdef HAVE_AVX512FINTRIN_H
     if (cpu_features->has_avx2) {
         unsigned int cpu_info7[4];
@@ -284,9 +289,38 @@ _runtime_intel_cpu_features(CPUFeatures *const cpu_features)
             (xcr0 & (XCR0_OPMASK | XCR0_ZMM_HI256 | XCR0_HI16_ZMM)) ==
                 (XCR0_OPMASK | XCR0_ZMM_HI256 | XCR0_HI16_ZMM)) {
             cpu_features->has_avx512f = 1;
+            cpu_features->has_avx512vl =
+                ((cpu_info7[1] & CPUID_EBX_AVX512VL) == CPUID_EBX_AVX512VL);
         }
         /* LCOV_EXCL_STOP */
     }
+
+    /* LCOV_EXCL_START */
+    if (cpu_features->has_avx512f) {
+        unsigned int vendor_info[4];
+
+        _cpuid(vendor_info, 0x0);
+        /* "AuthenticAMD" */
+        if (vendor_info[1] == 0x68747541 && vendor_info[3] == 0x69746e65 &&
+            vendor_info[2] == 0x444d4163) {
+            unsigned int ext_info[4];
+
+            _cpuid(ext_info, 0x80000000);
+            if (ext_info[0] >= 0x8000001a) {
+                _cpuid(ext_info, 0x8000001a);
+                /* A clear bit means the CPU runs 512-bit AVX-512 as two 256-bit passes.
+                 * Only AEGIS-256X4 gets faster with the narrower backend there; AEGIS-128X4
+                 * measured slower on Zen 4 and stays on the 512-bit one. */
+                if ((ext_info[0] & 0x00000008) == 0x0) {
+                    cpu_features->has_narrow_avx512 = 1;
+                }
+            }
+        }
+        /* Intel has no equivalent bit to check, but every Intel chip that supports AVX-512 today
+         * runs it at full width anyway, so there's nothing to detect yet. Worth revisiting if that
+         * ever changes. */
+    }
+    /* LCOV_EXCL_STOP */
 #endif
 
     return 0;
@@ -357,6 +391,18 @@ int
 aegis_runtime_has_avx512f(void)
 {
     return _cpu_features.has_avx512f;
+}
+
+int
+aegis_runtime_has_avx512vl(void)
+{
+    return _cpu_features.has_avx512vl;
+}
+
+int
+aegis_runtime_has_narrow_avx512(void)
+{
+    return _cpu_features.has_narrow_avx512;
 }
 
 int

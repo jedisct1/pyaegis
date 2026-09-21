@@ -59,6 +59,7 @@ from .raf import (
     RAFIOError,
     RAFStorage,
     SHA256MerkleHasher,
+    raf_derive_master_key,
     raf_open,
     raf_probe,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "RAFIOError",
     "RAFStorage",
     "SHA256MerkleHasher",
+    "raf_derive_master_key",
     "raf_open",
     "raf_probe",
 ]

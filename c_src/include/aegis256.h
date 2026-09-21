@@ -29,12 +29,12 @@ extern "C" {
 
 /* An AEGIS state, for incremental updates */
 typedef struct aegis256_state {
-    CRYPTO_ALIGN(16) uint8_t opaque[192];
+    uint8_t opaque[192];
 } aegis256_state;
 
 /* An AEGIS state, only for MAC updates */
 typedef struct aegis256_mac_state {
-    CRYPTO_ALIGN(16) uint8_t opaque[288];
+    uint8_t opaque[288];
 } aegis256_mac_state;
 
 /* The length of an AEGIS key, in bytes */
@@ -206,7 +206,26 @@ int aegis256_state_decrypt_final(aegis256_state *st_, const uint8_t *mac, size_t
 void aegis256_stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_t *k);
 
 /*
+ * Encrypt or decrypt a message WITHOUT AUTHENTICATION, by XORing it with the output of
+ * aegis256_stream().
+ *
+ * Only use this if your protocol authenticates the data some other way. Never reuse a nonce with
+ * the same key. Don't share a key and nonce with other functions in this library either.
+ *
+ * out: output buffer (can be the same as `in`)
+ * in: input buffer
+ * len: length of the input
+ * npub: nonce input buffer (32 bytes)
+ * k: key input buffer (32 bytes)
+ */
+void aegis256_stream_xor(uint8_t *out, const uint8_t *in, size_t len, const uint8_t *npub,
+                         const uint8_t *k);
+
+/*
  * Encrypt a message WITHOUT AUTHENTICATION, similar to AES-CTR.
+ *
+ * DEPRECATED: use aegis256_stream_xor() in new code. Its output is different, so only keep this for
+ * existing data.
  *
  * WARNING: this is an insecure mode of operation, provided for compatibility with specific
  * protocols that bring their own authentication scheme.
@@ -217,11 +236,15 @@ void aegis256_stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_
  * npub: nonce input buffer (32 bytes)
  * k: key input buffer (32 bytes)
  */
+AEGIS_DEPRECATED("use aegis256_stream_xor() in new code; its output is different")
 void aegis256_encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen,
                                       const uint8_t *npub, const uint8_t *k);
 
 /*
  * Decrypt a message WITHOUT AUTHENTICATION, similar to AES-CTR.
+ *
+ * DEPRECATED: use aegis256_stream_xor() in new code. Only keep this to decrypt data from
+ * aegis256_encrypt_unauthenticated().
  *
  * WARNING: this is an insecure mode of operation, provided for compatibility with specific
  * protocols that bring their own authentication scheme.
@@ -232,6 +255,7 @@ void aegis256_encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen,
  * npub: nonce input buffer (32 bytes)
  * k: key input buffer (32 bytes)
  */
+AEGIS_DEPRECATED("use aegis256_stream_xor() in new code; its output is different")
 void aegis256_decrypt_unauthenticated(uint8_t *m, const uint8_t *c, size_t clen,
                                       const uint8_t *npub, const uint8_t *k);
 

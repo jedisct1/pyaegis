@@ -82,6 +82,7 @@ struct aegis256x2_implementation aegis256x2_altivec_implementation = {
     .encrypt_unauthenticated = encrypt_unauthenticated,
     .decrypt_unauthenticated = decrypt_unauthenticated,
     .stream                  = stream,
+    .stream_xor              = stream_xor,
     .state_init              = state_init,
     .state_encrypt_update    = state_encrypt_update,
     .state_encrypt_final     = state_encrypt_final,

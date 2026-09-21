@@ -9,6 +9,20 @@
 #define CTX_TYPE       CONCAT3(VARIANT, _raf_, ctx)
 #define MAC_STATE_TYPE CONCAT3(VARIANT, _mac_, state)
 
+static inline aegis_raf_ctx_internal *
+ctx_internal(CTX_TYPE *ctx)
+{
+    COMPILER_ASSERT((AEGIS_RAF_CTX_ALIGN & (AEGIS_RAF_CTX_ALIGN - 1)) == 0);
+    COMPILER_ASSERT(sizeof(aegis_raf_ctx_internal) + AEGIS_RAF_CTX_ALIGN <= sizeof(CTX_TYPE));
+    return (aegis_raf_ctx_internal *) AEGIS_RAF_CTX_ADDR(ctx);
+}
+
+static inline const aegis_raf_ctx_internal *
+ctx_internal_const(const CTX_TYPE *ctx)
+{
+    return (const aegis_raf_ctx_internal *) AEGIS_RAF_CTX_ADDR(ctx);
+}
+
 #define KDF_CONST     "aegis-raf-kdf-v1"
 #define KDF_CONST_LEN 16
 
@@ -85,6 +99,36 @@ get_chunk_count(uint32_t chunk_size, uint64_t file_size)
 }
 
 static int
+check_usable(const aegis_raf_ctx_internal *ctx)
+{
+    if (ctx->failed) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static void
+begin_mutation(aegis_raf_ctx_internal *ctx)
+{
+    ctx->failed = 1;
+}
+
+static int
+complete_mutation(aegis_raf_ctx_internal *ctx)
+{
+    ctx->failed = 0;
+    return 0;
+}
+
+static int
+resize_backing(aegis_raf_ctx_internal *ctx, uint64_t size)
+{
+    begin_mutation(ctx);
+    return ctx->io.set_size(ctx->io.user, size);
+}
+
+static int
 write_header(aegis_raf_ctx_internal *ctx)
 {
     uint8_t hdr[AEGIS_RAF_HEADER_SIZE];
@@ -102,6 +146,7 @@ write_header(aegis_raf_ctx_internal *ctx)
         return -1;
     }
 
+    begin_mutation(ctx);
     return ctx->io.write_at(ctx->io.user, hdr, AEGIS_RAF_HEADER_SIZE, 0);
 }
 
@@ -333,6 +378,7 @@ write_chunk(aegis_raf_ctx_internal *ctx, size_t plaintext_len, uint64_t chunk_id
         return -1;
     }
 
+    begin_mutation(ctx);
     ret = ctx->io.write_at(ctx->io.user, record, rec_size, off);
     memset(record, 0, rec_size);
     return ret;
@@ -373,7 +419,8 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
-    file_exists = (backing_size >= AEGIS_RAF_HEADER_SIZE);
+    /* Even a short or foreign file counts, so it isn't replaced without AEGIS_RAF_TRUNCATE. */
+    file_exists = (backing_size > 0);
 
     if (file_exists && !(cfg->flags & AEGIS_RAF_TRUNCATE)) {
         errno = EEXIST;
@@ -384,8 +431,7 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
-    internal = (aegis_raf_ctx_internal *) ctx;
-    COMPILER_ASSERT(sizeof(CTX_TYPE) >= sizeof(aegis_raf_ctx_internal));
+    internal = ctx_internal(ctx);
     memset(internal, 0, sizeof(aegis_raf_ctx_internal));
 
     internal->io         = *io;
@@ -410,7 +456,7 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
 
     derive_keys(internal->enc_key, internal->hdr_key, master_key, internal->file_id);
 
-    if (internal->io.set_size(internal->io.user, AEGIS_RAF_HEADER_SIZE) != 0) {
+    if (resize_backing(internal, AEGIS_RAF_HEADER_SIZE) != 0) {
         zeroize_scratch_buffers(internal);
         memset(internal, 0, sizeof(aegis_raf_ctx_internal));
         return -1;
@@ -428,7 +474,7 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
-    return 0;
+    return complete_mutation(internal);
 }
 
 int
@@ -460,8 +506,7 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
-    internal = (aegis_raf_ctx_internal *) ctx;
-    COMPILER_ASSERT(sizeof(CTX_TYPE) >= sizeof(aegis_raf_ctx_internal));
+    internal = ctx_internal(ctx);
     memset(internal, 0, sizeof(aegis_raf_ctx_internal));
 
     internal->io        = *io;
@@ -523,7 +568,7 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
 int
 FN(read)(CTX_TYPE *ctx, uint8_t *out, size_t *bytes_read, size_t len, uint64_t offset)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
     size_t                  total_read;
     uint64_t                chunk_idx;
     size_t                  offset_in_chunk;
@@ -535,6 +580,9 @@ FN(read)(CTX_TYPE *ctx, uint8_t *out, size_t *bytes_read, size_t len, uint64_t o
     }
 
     *bytes_read = 0;
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
     if (len == 0 || offset >= internal->file_size) {
         return 0;
     }
@@ -619,9 +667,9 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
         return -1;
     }
 
-    if (new_file_size > internal->file_size) {
+    if (new_num_chunks > old_num_chunks) {
         new_backing_size = AEGIS_RAF_HEADER_SIZE + chunks_size;
-        if (internal->io.set_size(internal->io.user, new_backing_size) != 0) {
+        if (resize_backing(internal, new_backing_size) != 0) {
             return -1;
         }
     }
@@ -729,13 +777,13 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
     }
 
     *bytes_written = total_written;
-    return 0;
+    return complete_mutation(internal);
 }
 
 int
 FN(write)(CTX_TYPE *ctx, size_t *bytes_written, const uint8_t *in, size_t len, uint64_t offset)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
 
     if (ctx == NULL || bytes_written == NULL || (len > 0 && in == NULL)) {
         errno = EINVAL;
@@ -743,6 +791,9 @@ FN(write)(CTX_TYPE *ctx, size_t *bytes_written, const uint8_t *in, size_t len, u
     }
 
     *bytes_written = 0;
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
     if (len == 0) {
         return 0;
     }
@@ -753,7 +804,7 @@ FN(write)(CTX_TYPE *ctx, size_t *bytes_written, const uint8_t *in, size_t len, u
 int
 FN(truncate)(CTX_TYPE *ctx, uint64_t size)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
     size_t                  written;
     uint64_t                old_num_chunks;
     uint64_t                new_num_chunks;
@@ -768,10 +819,12 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
         return -1;
     }
 
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
     if (size == internal->file_size) {
         return 0;
     }
-
     if (size > internal->file_size) {
         return write_impl(internal, &written, NULL, 0, size);
     }
@@ -791,11 +844,17 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
     }
     new_backing_size = AEGIS_RAF_HEADER_SIZE + chunks_size;
 
-    if (internal->io.set_size(internal->io.user, new_backing_size) != 0) {
-        return -1;
-    }
-
     if (internal->merkle_enabled) {
+        /* Read before mutating, so a failed read leaves the context usable. */
+        if (size > 0) {
+            last_chunk_idx = new_num_chunks - 1;
+            new_chunk_len  = (size_t) (size - last_chunk_idx * internal->chunk_size);
+            if (read_chunk(internal, last_chunk_idx) != 0) {
+                return -1;
+            }
+        }
+
+        begin_mutation(internal);
         if (new_num_chunks < old_num_chunks) {
             if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks, old_num_chunks - 1) !=
                 0) {
@@ -803,13 +862,7 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
             }
         }
 
-        if (size > 0 && new_num_chunks > 0) {
-            last_chunk_idx = new_num_chunks - 1;
-            new_chunk_len  = (size_t) (size - last_chunk_idx * internal->chunk_size);
-
-            if (read_chunk(internal, last_chunk_idx) != 0) {
-                return -1;
-            }
+        if (size > 0) {
             if (raf_merkle_update_chunk(&internal->merkle_cfg, internal->chunk_buf, new_chunk_len,
                                         last_chunk_idx) != 0) {
                 return -1;
@@ -817,20 +870,31 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
         }
     }
 
+    /* Publish the smaller logical size before discarding chunk records. */
     internal->file_size = size;
-    return write_header(internal);
+    if (write_header(internal) != 0) {
+        return -1;
+    }
+
+    if (resize_backing(internal, new_backing_size) != 0) {
+        return -1;
+    }
+    return complete_mutation(internal);
 }
 
 int
 FN(get_size)(const CTX_TYPE *ctx, uint64_t *size)
 {
-    const aegis_raf_ctx_internal *internal = (const aegis_raf_ctx_internal *) ctx;
+    const aegis_raf_ctx_internal *internal = ctx_internal_const(ctx);
 
     if (ctx == NULL || size == NULL) {
         errno = EINVAL;
         return -1;
     }
 
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
     *size = internal->file_size;
     return 0;
 }
@@ -838,13 +902,16 @@ FN(get_size)(const CTX_TYPE *ctx, uint64_t *size)
 int
 FN(sync)(CTX_TYPE *ctx)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
 
     if (ctx == NULL) {
         errno = EINVAL;
         return -1;
     }
 
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
     if (internal->io.sync != NULL) {
         return internal->io.sync(internal->io.user);
     }
@@ -854,7 +921,7 @@ FN(sync)(CTX_TYPE *ctx)
 void
 FN(close)(CTX_TYPE *ctx)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
 
     if (ctx == NULL) {
         return;
@@ -870,7 +937,7 @@ FN(close)(CTX_TYPE *ctx)
 int
 FN(merkle_rebuild)(CTX_TYPE *ctx)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
     uint64_t                num_chunks;
     uint64_t                ci;
     size_t                  chunk_len;
@@ -886,11 +953,19 @@ FN(merkle_rebuild)(CTX_TYPE *ctx)
         errno = ENOTSUP;
         return -1;
     }
+    if (check_usable(internal) != 0) {
+        return -1;
+    }
 
     num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
 
+    /* A failed initial read must leave the live tree and context usable. */
+    if (num_chunks > 0 && read_chunk(internal, 0) != 0) {
+        return -1;
+    }
+    begin_mutation(internal);
     for (ci = 0; ci < num_chunks; ci++) {
-        if (read_chunk(internal, ci) != 0) {
+        if (ci > 0 && read_chunk(internal, ci) != 0) {
             return -1;
         }
 
@@ -922,13 +997,13 @@ FN(merkle_rebuild)(CTX_TYPE *ctx)
         }
     }
 
-    return 0;
+    return complete_mutation(internal);
 }
 
 int
 FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
 {
-    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    aegis_raf_ctx_internal *internal = ctx_internal(ctx);
     uint64_t                num_chunks;
     uint64_t                ci;
     size_t                  chunk_len;
@@ -952,6 +1027,9 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
 
     if (!internal->merkle_enabled) {
         errno = ENOTSUP;
+        return -1;
+    }
+    if (check_usable(internal) != 0) {
         return -1;
     }
 
@@ -1089,7 +1167,7 @@ cleanup:
 int
 FN(merkle_commitment)(const CTX_TYPE *ctx, uint8_t *out, size_t out_len)
 {
-    const aegis_raf_ctx_internal *internal = (const aegis_raf_ctx_internal *) ctx;
+    const aegis_raf_ctx_internal *internal = ctx_internal_const(ctx);
     uint8_t                       commit_ctx[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES];
 
     if (ctx == NULL) {
@@ -1098,6 +1176,9 @@ FN(merkle_commitment)(const CTX_TYPE *ctx, uint8_t *out, size_t out_len)
     }
     if (!internal->merkle_enabled) {
         errno = ENOTSUP;
+        return -1;
+    }
+    if (check_usable(internal) != 0) {
         return -1;
     }
 

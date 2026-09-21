@@ -16,6 +16,10 @@
 #    define EINVAL 22
 #endif
 
+#ifndef EIO
+#    define EIO 5
+#endif
+
 #ifndef EEXIST
 #    define EEXIST 17
 #endif
@@ -60,7 +64,24 @@ typedef struct aegis_raf_ctx_internal {
     int                     merkle_enabled;
     uint8_t                 alg_id;
     uint8_t                 version;
+    /* Sticky once a mutation fails; see the overview in aegis_raf.h. */
+    uint8_t failed;
 } aegis_raf_ctx_internal;
+
+typedef struct aegis_raf_ctx_align_probe {
+    char                   c;
+    aegis_raf_ctx_internal ctx;
+} aegis_raf_ctx_align_probe;
+
+/* C99 has no _Alignof, so the alignment is read from the padding before the member. */
+#define AEGIS_RAF_CTX_ALIGN offsetof(aegis_raf_ctx_align_probe, ctx)
+
+/*
+ * Public contexts are plain byte arrays that may live at any address.
+ * The internal context sits at the first properly aligned address inside them.
+ */
+#define AEGIS_RAF_CTX_ADDR(CTX) \
+    ((((uintptr_t) (CTX)) + (AEGIS_RAF_CTX_ALIGN - 1)) & ~(uintptr_t) (AEGIS_RAF_CTX_ALIGN - 1))
 
 #define LOAD64_LE(SRC) load64_le(SRC)
 static inline uint64_t

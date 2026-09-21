@@ -28,6 +28,16 @@
 #    endif
 #endif
 
+#ifndef AEGIS_DEPRECATED
+#    if defined(__GNUC__) || defined(__clang__)
+#        define AEGIS_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#    elif defined(_MSC_VER)
+#        define AEGIS_DEPRECATED(msg) __declspec(deprecated(msg))
+#    else
+#        define AEGIS_DEPRECATED(msg)
+#    endif
+#endif
+
 #include "aegis128l.h"
 #include "aegis128x2.h"
 #include "aegis128x4.h"

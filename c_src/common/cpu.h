@@ -25,6 +25,10 @@ int aegis_runtime_has_avx2(void);
 
 int aegis_runtime_has_avx512f(void);
 
+int aegis_runtime_has_avx512vl(void);
+
+int aegis_runtime_has_narrow_avx512(void);
+
 int aegis_runtime_has_aesni(void);
 
 int aegis_runtime_has_vaes(void);

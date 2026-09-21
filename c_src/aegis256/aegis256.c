@@ -143,6 +143,13 @@ aegis256_stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_t *k)
 }
 
 void
+aegis256_stream_xor(uint8_t *out, const uint8_t *in, size_t len, const uint8_t *npub,
+                    const uint8_t *k)
+{
+    implementation->stream_xor(out, in, len, npub, k);
+}
+
+void
 aegis256_encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen, const uint8_t *npub,
                                  const uint8_t *k)
 {

@@ -19,9 +19,74 @@ from pyaegis import (
     RAFError,
     RAFIOError,
     SHA256MerkleHasher,
+    raf_derive_master_key,
     raf_open,
     raf_probe,
 )
+
+
+class TestRafDeriveMasterKey:
+    """Tests for context-bound RAF key derivation."""
+
+    def test_128_bit_known_answer(self):
+        master_key = bytes(range(16))
+
+        derived = raf_derive_master_key(master_key, b"test-context")
+
+        assert derived == bytes.fromhex("fb80072c5a6f1cddc6e97b35ed1f3bf3")
+
+    def test_256_bit_known_answer(self):
+        master_key = bytes(range(32))
+
+        derived = raf_derive_master_key(master_key, b"test-context")
+
+        assert derived == bytes.fromhex(
+            "fee2d3cc58c69d8f43fd7b4e33eaec0053539685c7e284e6e12ee9c4f423d136"
+        )
+
+    def test_empty_context_is_domain_separated(self):
+        master_key = bytes(range(16))
+
+        derived = raf_derive_master_key(master_key)
+
+        assert derived == bytes.fromhex("9b8e6ddb09c9eb0137888ca2a366fdd0")
+        assert derived != master_key
+
+    @pytest.mark.parametrize(("key_size", "max_context_size"), [(16, 120), (32, 72)])
+    def test_context_length_limits(self, key_size, max_context_size):
+        master_key = bytes(range(key_size))
+
+        assert len(raf_derive_master_key(master_key, b"x" * max_context_size)) == key_size
+        with pytest.raises(ValueError, match=f"at most {max_context_size} bytes"):
+            raf_derive_master_key(master_key, b"x" * (max_context_size + 1))
+
+    @pytest.mark.parametrize("key_size", [0, 15, 17, 31, 33])
+    def test_invalid_key_length(self, key_size):
+        with pytest.raises(ValueError, match="master_key must be 16 or 32 bytes"):
+            raf_derive_master_key(b"x" * key_size)
+
+    @pytest.mark.parametrize(
+        ("master_key", "context"),
+        [("not-bytes", b"context"), (b"x" * 16, "not-bytes")],
+    )
+    def test_requires_bytes(self, master_key, context):
+        with pytest.raises(TypeError, match="must be bytes"):
+            raf_derive_master_key(master_key, context)
+
+    def test_derived_key_opens_only_with_same_context(self):
+        storage = BytesIOStorage()
+        master_key = bytes(range(16))
+        key = raf_derive_master_key(master_key, b"context-a")
+
+        with AegisRaf128L(storage, key, create=True) as raf:
+            raf.write(b"context-bound data")
+
+        with AegisRaf128L(storage, raf_derive_master_key(master_key, b"context-a")) as raf:
+            assert raf.read() == b"context-bound data"
+
+        wrong_key = raf_derive_master_key(master_key, b"context-b")
+        with pytest.raises(RAFAuthenticationError):
+            AegisRaf128L(storage, wrong_key)
 
 
 class TestBytesIOStorage:
