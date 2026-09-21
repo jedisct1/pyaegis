@@ -1,6 +1,6 @@
 [project]
 name = "pyaegis"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python bindings for libaegis - high-performance AEGIS authenticated encryption"
 readme = "README.md"
 license = { text = "MIT" }
