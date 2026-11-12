@@ -11,7 +11,8 @@ from __future__ import annotations
 import errno as errno_module
 import hashlib
 import os
-from typing import Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import NoReturn, Protocol, runtime_checkable
 
 from pyaegis._aegis_ffi import ffi, lib
 from pyaegis.aegis import AegisError
@@ -50,7 +51,7 @@ def _check_auth_error(err: int) -> bool:
     return EBADMSG is not None and err == EBADMSG
 
 
-def _raise_io_error(err: int, operation: str) -> None:
+def _raise_io_error(err: int, operation: str) -> NoReturn:
     """Raise appropriate exception based on errno."""
     if _check_auth_error(err):
         raise RAFAuthenticationError(
@@ -507,18 +508,18 @@ class _AEGISRAFBase:
     DEFAULT_CHUNK_SIZE: int = 65536  # 64 KB default
 
     _ctx_type: str
-    _create_func = None
-    _open_func = None
-    _read_func = None
-    _write_func = None
-    _truncate_func = None
-    _get_size_func = None
-    _sync_func = None
-    _close_func = None
-    _scratch_size_func = None
-    _merkle_rebuild_func = None
-    _merkle_verify_func = None
-    _merkle_commitment_func = None
+    _create_func: Callable[..., int]
+    _open_func: Callable[..., int]
+    _read_func: Callable[..., int]
+    _write_func: Callable[..., int]
+    _truncate_func: Callable[..., int]
+    _get_size_func: Callable[..., int]
+    _sync_func: Callable[..., int]
+    _close_func: Callable[..., None]
+    _scratch_size_func: Callable[..., int]
+    _merkle_rebuild_func: Callable[..., int]
+    _merkle_verify_func: Callable[..., int]
+    _merkle_commitment_func: Callable[..., int]
 
     def __init__(
         self,
@@ -805,7 +806,7 @@ class _AEGISRAFBase:
         if result != 0:
             _raise_io_error(ffi.errno, "read_into")
 
-        actual = bytes_read[0]
+        actual = int(bytes_read[0])
         self._position = offset + actual
         return actual
 
@@ -843,7 +844,7 @@ class _AEGISRAFBase:
             _raise_io_error(err, "write")
 
         self._position = offset + bytes_written[0]
-        return bytes_written[0]
+        return int(bytes_written[0])
 
     def pwrite(self, data: bytes, offset: int) -> int:
         """Write at offset without updating position (like os.pwrite).
@@ -872,7 +873,7 @@ class _AEGISRAFBase:
             self._check_merkle_eoverflow(err, offset, len(data))
             _raise_io_error(err, "pwrite")
 
-        return bytes_written[0]
+        return int(bytes_written[0])
 
     def truncate(self, size: int | None = None) -> int:
         """Resize the file.
@@ -938,7 +939,7 @@ class _AEGISRAFBase:
         if result != 0:
             _raise_io_error(ffi.errno, "get_size")
 
-        return size_ptr[0]
+        return int(size_ptr[0])
 
     def sync(self) -> None:
         """Flush writes to backing storage."""
@@ -1012,7 +1013,7 @@ class _AEGISRAFBase:
             return None
         err = ffi.errno
         if _check_auth_error(err):
-            return corrupted[0]
+            return int(corrupted[0])
         _raise_io_error(err, "merkle_verify")
 
     def verify_root(self, expected_root: bytes) -> None:
@@ -1051,6 +1052,7 @@ class _AEGISRAFBase:
             raise ValueError("I/O operation on closed file")
         if self._merkle_cfg is None:
             return None
+        assert self._merkle_hasher is not None
         hash_len = self._merkle_hasher.hash_len
         out = ffi.new(f"uint8_t[{hash_len}]")
         result = self._merkle_commitment_func(self._ctx, out, hash_len)

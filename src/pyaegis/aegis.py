@@ -3,6 +3,7 @@ High-level Pythonic API for AEGIS authenticated encryption.
 """
 
 import os
+from collections.abc import Callable
 
 from pyaegis._aegis_ffi import ffi, lib
 
@@ -32,11 +33,11 @@ class _AEGISBase:
     TAG_SIZE_MAX: int = 32
 
     # Subclasses should define these as references to C library functions
-    _encrypt_func = None
-    _decrypt_func = None
-    _encrypt_detached_func = None
-    _decrypt_detached_func = None
-    _stream_func = None
+    _encrypt_func: Callable[..., int] | None = None
+    _decrypt_func: Callable[..., int] | None = None
+    _encrypt_detached_func: Callable[..., int] | None = None
+    _decrypt_detached_func: Callable[..., int] | None = None
+    _stream_func: Callable[..., None] | None = None
 
     def __init__(self, tag_size: int = 32) -> None:
         """
@@ -726,12 +727,12 @@ class _AEGISMACBase:
     TAG_SIZE_MAX: int = 32
 
     # Subclasses should define these
-    _mac_state_type = None
-    _mac_init_func = None
-    _mac_update_func = None
-    _mac_final_func = None
-    _mac_verify_func = None
-    _mac_reset_func = None
+    _mac_state_type: str
+    _mac_init_func: Callable[..., None]
+    _mac_update_func: Callable[..., int]
+    _mac_final_func: Callable[..., int]
+    _mac_verify_func: Callable[..., int]
+    _mac_reset_func: Callable[..., None]
 
     def __init__(self, key: bytes, nonce: bytes, tag_size: int = 32) -> None:
         """
@@ -994,10 +995,10 @@ class _AEGISStreamEncryptBase:
     TAG_SIZE_MAX: int = 32
 
     # Subclasses should define these
-    _state_type = None
-    _state_init_func = None
-    _state_encrypt_update_func = None
-    _state_encrypt_final_func = None
+    _state_type: str
+    _state_init_func: Callable[..., None]
+    _state_encrypt_update_func: Callable[..., int]
+    _state_encrypt_final_func: Callable[..., int]
 
     def __init__(
         self,
@@ -1121,10 +1122,10 @@ class _AEGISStreamDecryptBase:
     TAG_SIZE_MAX: int = 32
 
     # Subclasses should define these
-    _state_type = None
-    _state_init_func = None
-    _state_decrypt_update_func = None
-    _state_decrypt_final_func = None
+    _state_type: str
+    _state_init_func: Callable[..., None]
+    _state_decrypt_update_func: Callable[..., int]
+    _state_decrypt_final_func: Callable[..., int]
 
     def __init__(
         self,
@@ -1163,7 +1164,7 @@ class _AEGISStreamDecryptBase:
         ad = associated_data or b""
         self._state_init_func(self._state, ad, len(ad), nonce, key)
         self._finalized = False
-        self._plaintext_chunks = []
+        self._plaintext_chunks: list[bytes] = []
 
     @classmethod
     def random_key(cls) -> bytes:
