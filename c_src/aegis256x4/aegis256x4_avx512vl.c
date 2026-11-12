@@ -124,6 +124,11 @@ aegis256x4_update_nodata(aes_block_t *const state)
     state[0] = AES_ENC(tmp, state[0]);
 }
 
+/* 32 vector registers: four blocks in flight pay off here. */
+#        if defined(__x86_64__) || defined(_M_AMD64)
+#            define AEGIS_UNROLL_X4 1
+#        endif
+
 #        include "aegis256x4_common.h"
 
 struct aegis256x4_implementation aegis256x4_avx512vl_implementation = {
@@ -143,6 +148,7 @@ struct aegis256x4_implementation aegis256x4_avx512vl_implementation = {
     .state_mac_final         = state_mac_final,
     .state_mac_reset         = state_mac_reset,
     .state_mac_clone         = state_mac_clone,
+    .state_mac_verify        = state_mac_verify,
 };
 
 #        ifdef __clang__

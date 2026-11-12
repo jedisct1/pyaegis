@@ -107,6 +107,28 @@ enum aegis_bulk_operation {
 #    define AEGIS_NOINLINE      __declspec(noinline)
 #endif
 
+/* GCC reuses one zeroed register and copies it before every AESE, which is slow. This gives each AESE a fresh zero instead. */
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__)
+#    define AEGIS_NEON_ZERO()                                   \
+        __extension__({                                         \
+            uint8x16_t z_;                                      \
+            __asm__ __volatile__("movi %0.16b, #0" : "=w"(z_)); \
+            z_;                                                 \
+        })
+#else
+#    define AEGIS_NEON_ZERO() vmovq_n_u8(0)
+#endif
+
+/* GCC 8 only has the 16-bit forms of EOR3 and BCAX. They are bitwise, so the lane size doesn't matter. */
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 9
+#    define veor3q_u8(A, B, C) \
+        vreinterpretq_u8_u16(  \
+            veor3q_u16(vreinterpretq_u16_u8(A), vreinterpretq_u16_u8(B), vreinterpretq_u16_u8(C)))
+#    define vbcaxq_u8(A, B, C) \
+        vreinterpretq_u8_u16(  \
+            vbcaxq_u16(vreinterpretq_u16_u8(A), vreinterpretq_u16_u8(B), vreinterpretq_u16_u8(C)))
+#endif
+
 #if defined(__has_attribute)
 #    if __has_attribute(code_align)
 #        define CRYPTO_ALIGN_LOOP(x) __attribute__((code_align(x)))
@@ -158,6 +180,34 @@ rotl32(const uint32_t x, const int b)
 }
 
 #define COMPILER_ASSERT(X) (void) sizeof(char[(X) ? 1 : -1])
+
+static inline int
+aegis_tag_compare(const uint8_t *x, const uint8_t *y, const size_t n)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    uint64_t acc64 = 0U;
+    uint64_t x64, y64;
+    uint16_t acc;
+    size_t   i;
+
+    for (i = 0; i < n; i += 8) {
+        memcpy(&x64, x + i, sizeof x64);
+        memcpy(&y64, y + i, sizeof y64);
+        acc64 |= x64 ^ y64;
+    }
+    acc64 |= acc64 >> 32;
+    acc64 |= acc64 >> 16;
+    acc64 |= acc64 >> 8;
+    acc = (uint16_t) (acc64 & 0xff);
+    __asm__("" : "+r"(acc) :);
+    acc--;
+    acc >>= 15;
+
+    return (int) acc - 1;
+#else
+    return n == 16 ? aegis_verify_16(x, y) : aegis_verify_32(x, y);
+#endif
+}
 
 #ifndef ERANGE
 #    define ERANGE 34
