@@ -210,7 +210,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     # Build CFFI extension as part of setup
-    setup_requires=["cffi>=2.0.0"],
+    setup_requires=["cffi>=2.1.1"],
     cffi_modules=["build_cffi.py:ffibuilder"],
     # Ensure the C sources are included in source distributions
     include_package_data=True,

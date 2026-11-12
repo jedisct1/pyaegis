@@ -385,13 +385,14 @@ from pyaegis import AegisRaf128L, FileStorage
 key = AegisRaf128L.random_key()
 
 # Create encrypted file on disk
-with FileStorage("/path/to/file.raf", "w+b") as storage, \
-        AegisRaf128L(storage, key, create=True) as f:
+with (
+    FileStorage("/path/to/file.raf", "w+b") as storage,
+    AegisRaf128L(storage, key, create=True) as f,
+):
     f.write(b"Secret data")
 
 # Read from encrypted file
-with FileStorage("/path/to/file.raf", "r+b") as storage, \
-        AegisRaf128L(storage, key) as f:
+with FileStorage("/path/to/file.raf", "r+b") as storage, AegisRaf128L(storage, key) as f:
     print(f.read())
 ```
 
